@@ -1,17 +1,13 @@
 // Package cmd implements the task-clock CLI dispatch.
 //
 // Dispatch uses the standard library `flag` package (no third-party CLI
-// framework) to keep the scaffold dependency-free and offline-buildable.
-// Subcommands are stubs until Phase 3 (see docs/ja/task-clock-rfp.ja.md).
+// framework) to keep the tool dependency-light and offline-buildable.
 package cmd
 
 import (
-	"errors"
 	"fmt"
 	"io"
 )
-
-var errNotImplemented = errors.New("not implemented yet (scaffold — see docs/ja/task-clock-rfp.ja.md)")
 
 // Run executes the CLI and returns the process exit code. Streams and
 // version are injected so tests can exercise dispatch without a process.
@@ -22,27 +18,26 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 	}
 
 	rest := args[1:]
-	_ = rest
 	var err error
 	switch args[0] {
 	case "serve":
-		err = errNotImplemented
+		err = runServe(rest, stdout, stderr, version)
 	case "status":
-		err = errNotImplemented
+		err = runStatus(rest, stdout, stderr)
 	case "list":
-		err = errNotImplemented
+		err = runList(rest, stdout, stderr)
 	case "history":
-		err = errNotImplemented
+		err = runHistory(rest, stdout, stderr)
 	case "trigger":
-		err = errNotImplemented
+		err = runTrigger(rest, stdout, stderr)
 	case "reload":
-		err = errNotImplemented
+		err = runReload(rest, stdout, stderr)
 	case "validate":
-		err = errNotImplemented
+		err = runValidate(rest, stdout, stderr)
 	case "install":
-		err = errNotImplemented
+		err = runInstall(stdout)
 	case "uninstall":
-		err = errNotImplemented
+		err = runUninstall(stdout)
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, versionString(version))
 		return 0
