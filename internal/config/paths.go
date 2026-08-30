@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 const appDirName = "task-clock"
@@ -14,13 +15,8 @@ const appDirName = "task-clock"
 func SearchDirs() []string {
 	var dirs []string
 	add := func(d string) {
-		if d == "" {
+		if d == "" || slices.Contains(dirs, d) {
 			return
-		}
-		for _, seen := range dirs {
-			if seen == d {
-				return
-			}
 		}
 		dirs = append(dirs, d)
 	}
