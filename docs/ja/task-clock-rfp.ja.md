@@ -41,6 +41,15 @@ GET  /v1/healthz                   死活
 
 CLI の status / history / trigger / reload はすべて HTTP API 経由（一本化）。状態の正はデーモンに一元化し、SQLite スキーマは内部実装に保つ。デーモン停止中は CLI がその旨を明示する。
 
+**API 認証** — 静的 API キー方式。config ファイルにキーを設定するだけの簡易実装とし、OAuth 等の高度な仕組みは採用しない:
+
+- キーは `config.toml` の `[daemon] api_key` に設定。**未設定なら `serve` は起動を拒否**（fail-closed; `validate` も事前検出）。キー生成は `openssl rand -hex 32` 程度を README に例示
+- 全エンドポイントで `Authorization: Bearer <key>` を要求。例外は `/v1/healthz` のみ（静的応答で情報を返さない）
+- 照合は**定数時間比較**（crypto/subtle）。キー値はログに絶対に出力しない
+- config 読込時にファイル権限を検査し、`api_key` を含むファイルが group/other 可読なら起動拒否（`chmod 600` を案内）— org 規約「credentials を含む config は権限チェック」
+- bind は 127.0.0.1 固定（0.0.0.0 不可）。CORS ヘッダは一切返さず、ブラウザ経由のクロスオリジン呼び出しを既定拒否。エラーメッセージは静的（入力をエコーしない）、JSON 応答は json.Marshal 経由
+- レートリミットは**意図的に非搭載**（localhost + キー必須の脅威モデルでは過剰。リモート公開しない前提が崩れる時に再検討）
+
 ### Input / Output
 
 **ステータスモデル** — 「次回」を2フィールドに分離する:
@@ -152,4 +161,5 @@ Reason: 常駐デーモン + CLI + 別プロジェクト GUI という構成は 
 - **コマンド形式**: argv 配列 + task-clock 自身による `${VAR}` 展開（mcp.json 方式、ユーザー提案）。シェルは opt-in。未定義変数はエラー
 - **プラットフォーム**: macOS 専用に決定（問題領域が launchd 固有）
 - **App Nap 対策**: ユーザー指摘により明示要件化。短周期 ticker ポーリング + `ProcessType: Interactive` + ドリフト自己計測、cgo assertion は Phase 2 contingency
+- **API 認証の確定 (2026-08-31)**: ユーザー要望により「config ファイルに静的キー」の簡易実装で明文化。簡易さの中で守る定石のみ義務化 — fail-closed（キー未設定は起動拒否）、Bearer ヘッダ、定数時間比較、config 権限検査（0600）、キー非ログ、127.0.0.1 固定、CORS 拒否。レートリミットは localhost 脅威モデルでは過剰として意図的に非搭載
 - **事故マシンの追調査 (2026-08-31)**: AI による調査でも原因特定に至らず（unified log の保持期間の制約もあり過去事象の追跡は困難）。「実行されなかった理由すら残らない」という launchd の可観測性欠陥の実証例として Problem Statement を裏づける。真因不明のまま設計する前提とし、ポリシー既定値を防御的（overlap = queue-one、catch-up = 有効）に決定

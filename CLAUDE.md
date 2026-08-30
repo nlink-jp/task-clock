@@ -19,7 +19,10 @@ Org rules: nlink-jp/.github `CONVENTIONS.md` を先に読むこと。
 - **command は argv 配列 + `${VAR}` 展開**（task-clock 自身が展開、mcp.json
   方式）。未定義変数はエラー（空文字への黙殺禁止）。`shell = true` は opt-in。
 - **ポリシー既定値は防御的**: overlap = `queue-one`、catch-up = 有効。
-- **HTTP API は localhost + token のみ。** リモート公開はスコープ外。
+- **HTTP API は localhost + token のみ。** リモート公開はスコープ外。認証は
+  `[daemon] api_key` の静的キー（Bearer）: 未設定は起動拒否（fail-closed）、
+  照合は定数時間比較、healthz 以外は全エンドポイント必須、キー値は非ログ、
+  config が group/other 可読なら起動拒否、bind は 127.0.0.1 固定・CORS なし。
 - **macOS 専用**（darwin/arm64）。クロスプラットフォーム化しない。
 
 ## Build

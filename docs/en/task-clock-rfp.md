@@ -41,6 +41,15 @@ GET  /v1/healthz                   liveness
 
 CLI status / history / trigger / reload all go through the HTTP API (single channel). The daemon is the single source of truth for state, keeping the SQLite schema an internal implementation detail. When the daemon is down, the CLI says so explicitly.
 
+**API authentication** — a static API key. Deliberately a simple "set a key in the config file" implementation; no OAuth or other elaborate schemes:
+
+- The key is set as `[daemon] api_key` in `config.toml`. **`serve` refuses to start when it is unset** (fail-closed; `validate` also catches it). The README shows a one-liner such as `openssl rand -hex 32` for generating one
+- Every endpoint requires `Authorization: Bearer <key>`; the only exception is `/v1/healthz` (a static response carrying no information)
+- Comparison is **constant-time** (crypto/subtle). The key value is never logged
+- File permissions are checked on config load: if a file containing `api_key` is group/other-readable, startup is refused (with `chmod 600` guidance) — per the org rule that configs holding credentials must check permissions
+- Binds to 127.0.0.1 only (never 0.0.0.0). No CORS headers are served, denying cross-origin browser calls by default. Error messages are static (no input echoed); JSON responses go through json.Marshal
+- Rate limiting is **deliberately omitted** (excessive for a localhost + key-required threat model; revisit only if the no-remote-exposure premise ever changes)
+
 ### Input / Output
 
 **Status model** — "next" is split into two fields:
@@ -152,4 +161,5 @@ Reason: the resident-daemon + CLI + separate-GUI-project shape matches active-le
 - **Command form**: argv array with `${VAR}` expansion performed by task-clock itself (mcp.json style, proposed by the user). Shell is opt-in. Undefined variables are errors
 - **Platform**: macOS only (the problem domain is launchd-specific)
 - **App Nap**: explicitly required per user feedback. Short-interval ticker polling + `ProcessType: Interactive` + drift self-measurement; a cgo assertion is a Phase 2 contingency
+- **API authentication settled (2026-08-31)**: per user request, codified as a simple "static key in the config file" scheme. Only the essentials are mandated within that simplicity — fail-closed (no key, no start), Bearer header, constant-time comparison, config permission check (0600), never logging the key, 127.0.0.1-only bind, no CORS. Rate limiting deliberately omitted as excessive for the localhost threat model
 - **Follow-up on the incident machine (2026-08-31)**: an AI-driven investigation could not identify the root cause (past events are also hard to trace given unified-log retention limits). This itself corroborates the Problem Statement — launchd records neither why nor even that a run did not happen. Designing under an unknown root cause, the policy defaults were set defensively (overlap = queue-one, catch-up = enabled)
