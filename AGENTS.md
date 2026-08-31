@@ -69,6 +69,13 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
 - 実行プロセスは自前の process group で起動（Setpgid）し、kill は
   `-pgid` へ SIGTERM → 5s 後 SIGKILL。stdout+stderr は run ごとの
   ログファイルへ統合保存。
+- **デーモン自身のログは data_dir/daemon.log**（internal/logrotate、
+  10MB×3 世代）。launchd 配下では stdout が消えるため serve が tee する。
+  クラッシュトレースは plist の StandardErrorPath → daemon.err。
+- **log_max_mb は Tick 駆動の stat 監視で kill**。ストリームを pipe で
+  挟む実装にしないこと — 孫プロセスが fd を継承すると exec.Cmd.Wait が
+  ハングする Go の既知の罠（コメント参照）。既定 0=無効は意図的
+  （タスクを不意に殺す既定は驚きが大きい）。
 - **watermark** は cron と排他（validate が強制）。発火条件は
   「max(前回成功, 前回試行開始) + interval」— 失敗はクラッシュループに
   ならず同ケイデンスで再試行。状態は履歴から復元（再起動で巻き戻らない）。

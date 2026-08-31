@@ -136,6 +136,7 @@ type TaskConfig struct {
 	Overlap   string            `toml:"overlap"`
 	CatchUp   *bool             `toml:"catch_up"`
 	Jitter    Duration          `toml:"jitter"`
+	LogMaxMB  int               `toml:"log_max_mb"`
 	Enabled   *bool             `toml:"enabled"`
 
 	Source string `toml:"-"` // file this task was defined in
@@ -403,6 +404,9 @@ func (c *Config) Validate(lookupEnv func(string) (string, bool)) []error {
 			if !validVarName(k) {
 				addf("%s: invalid env key %q", where, k)
 			}
+		}
+		if t.LogMaxMB < 0 {
+			addf("%s: log_max_mb must be >= 0", where)
 		}
 
 		// Pre-flight the ${VAR} expansion so an undefined variable is a

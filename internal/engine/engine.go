@@ -177,7 +177,9 @@ type runningRun struct {
 	scheduledFor     time.Time
 	startedAt        time.Time
 	handle           Handle
+	logPath          string
 	timedOut         bool
+	logCapKilled     bool
 	killedForRestart bool
 }
 
@@ -288,6 +290,17 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		now.Sub(r.startedAt) >= cfg.Timeout.Value() {
 		r.timedOut = true
 		r.handle.Kill()
+	}
+
+	// Log size cap, tick-checked like the timeout: a runaway task that
+	// floods its log gets killed with the reason recorded. (Capping the
+	// stream in-flight would need pipe pumping, which hangs Wait when a
+	// grandchild inherits the fd — the periodic stat avoids that trap.)
+	if r := st.running; r != nil && cfg.LogMaxMB > 0 && !r.timedOut && !r.logCapKilled {
+		if info, err := os.Stat(r.logPath); err == nil && info.Size() > int64(cfg.LogMaxMB)<<20 {
+			r.logCapKilled = true
+			r.handle.Kill()
+		}
 	}
 
 	if !cfg.IsEnabled() || st.paused {
@@ -476,6 +489,7 @@ func (e *Engine) startRunLocked(st *taskState, scheduledFor time.Time, outcome s
 		scheduledFor: scheduledFor,
 		startedAt:    now,
 		handle:       handle,
+		logPath:      logPath,
 	}
 	st.lastAttemptStart = now
 	go e.watch(cfg.Name, id, handle)
@@ -498,6 +512,8 @@ func (e *Engine) finishRun(task string, id int64, res Result) {
 		switch {
 		case st.running.timedOut:
 			errMsg = "killed: timeout exceeded"
+		case st.running.logCapKilled:
+			errMsg = "killed: log size cap exceeded (log_max_mb)"
 		case st.running.killedForRestart:
 			errMsg = "killed: overlap kill-and-restart"
 		}

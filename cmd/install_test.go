@@ -6,8 +6,10 @@ import (
 )
 
 func TestGeneratePlist(t *testing.T) {
-	plist := GeneratePlist("/opt/task-clock/bin/task-clock")
+	plist := GeneratePlist("/opt/task-clock/bin/task-clock", "/data/task-clock/daemon.err")
 	for _, want := range []string{
+		"<key>StandardErrorPath</key>",
+		"<string>/data/task-clock/daemon.err</string>",
 		"<string>jp.nlink.task-clock</string>",
 		"<string>/opt/task-clock/bin/task-clock</string>",
 		"<string>serve</string>",

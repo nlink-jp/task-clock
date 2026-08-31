@@ -12,6 +12,9 @@ cron    = "*/30 * * * *"
 command = ["${HOME}/bin/run-analysis", "--incremental"]
 workdir = "${HOME}/analysis"
 timeout = "25m"
+# log_max_mb: kill the run if its captured output exceeds this size (MB).
+# Default 0 = no cap — protective kills are opt-in.
+#log_max_mb = 50
 # overlap:  queue-one (default) | skip | kill-and-restart
 #   queue-one: a fire during a run waits and runs right after it (one deep)
 #   skip:      a fire during a run is dropped (recorded as missed)

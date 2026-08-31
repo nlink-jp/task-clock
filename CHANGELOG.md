@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 
 ## [Unreleased]
 
+### Added
+
+- The daemon's own operational log now survives launchd: serve tees its
+  log lines into a size-rotated `data_dir/daemon.log` (10 MB × 3
+  generations), and the launch agent captures crash traces to
+  `daemon.err`
+- Per-task `log_max_mb`: a run whose captured output exceeds the cap is
+  killed with the reason recorded (tick-checked like `timeout`; default
+  0 = no cap)
+
 ### Changed
 
 - pause now persists across daemon restarts (stored alongside the run

@@ -95,6 +95,7 @@ openssl rand -hex 32
 | `workdir` | 作業ディレクトリ（`${VAR}` 展開あり） | 継承 |
 | `env` | 追加環境変数（`[task.env]`）。`${VAR}` の第一解決先 | — |
 | `timeout` | 超過で kill（例 `"25m"`） | なし |
+| `log_max_mb` | 収集出力がこのサイズ(MB)を超えたら kill | 0（無制限） |
 | `overlap` | `queue-one` \| `skip` \| `kill-and-restart` | `queue-one` |
 | `catch_up` | 遅延した発火を気づいた時点で実行 | `true` |
 | `jitter` | 起動を 0〜jitter の決定的オフセットで分散 | なし |
@@ -166,9 +167,12 @@ curl -H "Authorization: Bearer $KEY" http://127.0.0.1:17282/v1/tasks
 ```
 task-clock.db          # 予定 vs 実績の履歴
 logs/<task>/<ts>.log   # run ごとの stdout+stderr 統合ログ
+daemon.log[.1..3]      # デーモン自身の運用ログ（10 MB × 3 世代でサイズローテーション）
+daemon.err             # launchd が捕捉するクラッシュトレース
 ```
 
-いずれも `retention_days`（既定 30 日）で削除されます。スリープ中に
+履歴とタスクログは `retention_days`（既定 30 日）で削除、デーモン自身の
+ログはサイズでローテーションされます。スリープ中に
 タスクは実行されません（仕様）。スリープ中に逃した発火は復帰時に 1 回だけ
 実行され（`catch_up`）、スキップ分は `missed(coalesced)` として記録されます。
 

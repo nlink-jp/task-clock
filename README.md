@@ -96,6 +96,7 @@ group/other-readable config file that holds one (`chmod 600`).
 | `workdir` | working directory (`${VAR}` expanded) | inherit |
 | `env` | extra environment (`[task.env]` table); also the first source for `${VAR}` | — |
 | `timeout` | kill the run after this duration (e.g. `"25m"`) | none |
+| `log_max_mb` | kill the run if its captured output exceeds this size | 0 (no cap) |
 | `overlap` | `queue-one` \| `skip` \| `kill-and-restart` | `queue-one` |
 | `catch_up` | run a delayed fire as soon as noticed | `true` |
 | `jitter` | spread the start by a deterministic 0..jitter offset | none |
@@ -168,9 +169,12 @@ Run history (SQLite) and per-run task output live under
 ```
 task-clock.db          # scheduled-vs-actual history
 logs/<task>/<ts>.log   # combined stdout+stderr per run
+daemon.log[.1..3]      # the daemon's own operational log, size-rotated (10 MB x 3)
+daemon.err             # crash traces captured by launchd
 ```
 
-Both are pruned after `retention_days` (default 30). Tasks do not run while
+Run history and task logs are pruned after `retention_days` (default 30);
+the daemon's own log rotates by size. Tasks do not run while
 the machine sleeps — by design; a fire that was missed while asleep runs
 once at wake (`catch_up`), and the skipped ones are recorded as
 `missed(coalesced)`.

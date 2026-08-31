@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -18,7 +19,15 @@ import (
 	"github.com/nlink-jp/task-clock/internal/clock"
 	"github.com/nlink-jp/task-clock/internal/config"
 	"github.com/nlink-jp/task-clock/internal/engine"
+	"github.com/nlink-jp/task-clock/internal/logrotate"
 	"github.com/nlink-jp/task-clock/internal/store"
+)
+
+// The daemon's own operational log: 10 MB per generation, 3 generations
+// kept (data_dir/daemon.log[.1..3]).
+const (
+	daemonLogMaxBytes = 10 << 20
+	daemonLogKeep     = 3
 )
 
 func runServe(args []string, stdout, stderr io.Writer, version string) error {
@@ -48,6 +57,19 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 		return err
 	}
 	defer st.Close()
+
+	// Under launchd the daemon's stdout goes nowhere, so operational log
+	// lines (reloads, hook failures, prune reports) tee into a rotating
+	// file in the data dir — a KeepAlive daemon runs for months, hence the
+	// size cap instead of unbounded growth.
+	if daemonLog, lerr := logrotate.New(
+		filepath.Join(cfg.Daemon.DataDir, "daemon.log"), daemonLogMaxBytes, daemonLogKeep); lerr == nil {
+		defer daemonLog.Close()
+		stdout = io.MultiWriter(stdout, daemonLog)
+		stderr = io.MultiWriter(stderr, daemonLog)
+	} else {
+		fmt.Fprintf(stderr, "%s daemon log unavailable: %v\n", logTime(), lerr)
+	}
 
 	eng := engine.New(clock.Real{}, st, engine.ExecRunner{}, engine.Options{
 		Notify:                 makeHookNotifier(cfg.Hooks, stdout, stderr),
