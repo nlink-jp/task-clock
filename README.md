@@ -87,13 +87,18 @@ your `tasks.d/` and edit:
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` with pipes |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | recipe: periodic Slack post via scli (mind the launchd PATH) |
 
-**What reloads live vs. what needs a restart**: task definitions
-(`tasks.d/`), `[hooks]`, and `retention_days` apply via
-`task-clock reload` (also `POST /v1/reload`, SIGHUP, or the GUI's Reload
-button) — no daemon restart. Only the structural `[daemon]` settings —
-`listen`, `api_key`, `data_dir`, `tick_interval` — need a restart, because
-swapping the listener live would tear down the very connection delivering
-the reload.
+**Applying config changes** — *reload* means any of `task-clock reload`,
+`POST /v1/reload`, SIGHUP, or the GUI's Reload button:
+
+| Change | Apply with |
+|---|---|
+| Task definitions (`tasks.d/*.toml`) | reload |
+| `[hooks]` | reload |
+| `[daemon]` `retention_days` | reload |
+| `[daemon]` `listen`, `api_key`, `data_dir`, `tick_interval` | daemon restart |
+
+The restart-only settings are structural: swapping the listener live would
+tear down the very connection delivering the reload.
 
 Generate the API key with:
 

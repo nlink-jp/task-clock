@@ -86,12 +86,18 @@ config 探索順（`config.toml` を含む最初のディレクトリが有効�
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` + パイプ |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | レシピ: scli で定期 Slack 投稿（launchd の PATH に注意） |
 
-**リロードで反映されるもの / 再起動が必要なもの**: タスク定義
-（`tasks.d/`）・`[hooks]`・`retention_days` は `task-clock reload`
-（`POST /v1/reload`・SIGHUP・GUI の Reload ボタンでも同じ）で反映され、
-デーモン再起動は不要です。再起動が必要なのは構造的な `[daemon]` 設定 —
-`listen`・`api_key`・`data_dir`・`tick_interval` — のみ。リスナーを生きた
-まま差し替えると、リロード要求を運んでいる接続そのものを壊すためです。
+**設定変更の反映方法** — *reload* は `task-clock reload`・
+`POST /v1/reload`・SIGHUP・GUI の Reload ボタンのいずれでも同じです:
+
+| 変更対象 | 反映方法 |
+|---|---|
+| タスク定義（`tasks.d/*.toml`） | reload |
+| `[hooks]` | reload |
+| `[daemon]` `retention_days` | reload |
+| `[daemon]` `listen`・`api_key`・`data_dir`・`tick_interval` | デーモン再起動 |
+
+再起動が必要な設定は構造的な理由によるものです: リスナーを生きたまま
+差し替えると、リロード要求を運んでいる接続そのものを壊してしまうためです。
 
 API キーの生成:
 
