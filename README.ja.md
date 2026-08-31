@@ -155,22 +155,29 @@ hook には `TASK_CLOCK_EVENT` / `TASK_CLOCK_TASK` / `TASK_CLOCK_SCHEDULED_FOR` 
 バックログは仕様どおりの挙動なので**意図的に通知しません**。streak hook は
 定刻発火で再武装します。
 
-## 使い方
+## コマンド
 
-```bash
-task-clock serve                  # デーモンをフォアグラウンド実行
-task-clock status                 # タスク状態・次回発火・超過
-task-clock list                   # デーモンが見ているタスク定義
-task-clock history analyze        # 予定 vs 実績の履歴（ログパス付き）
-task-clock trigger analyze        # 今すぐ発火
-task-clock pause analyze          # スケジュール停止（resume まで; 再起動を跨いで持続）
-task-clock resume analyze         # 再開（停止中の発火はバックログ投入しない）
-task-clock reload                 # tasks.d 再読込（SIGHUP でも可）
-task-clock validate               # 設定検証 + 次回発火プレビュー
-```
+| コマンド | 動作 |
+|---|---|
+| `serve` | デーモンをフォアグラウンド実行（通常は `install` 経由で launchd が担当） |
+| `status` | タスクごとの状態: 次回発火 / 実行見込み / 超過 / 最終 run |
+| `list` | デーモンが見ているタスク定義の一覧 |
+| `history <task>` | 予定 vs 実績の run 記録（run ごとのログパス付き） |
+| `trigger <task>` | 今すぐ発火（pause 中でも可・実行中なら拒否） |
+| `pause <task>` | `resume` までスケジュール停止 — デーモン再起動を跨いで持続 |
+| `resume <task>` | 再開。cron タスクは*未来の*次発火から（停止中ぶんは投入しない） |
+| `reload` | `tasks.d/`・`[hooks]`・`retention_days` を反映（SIGHUP でも同じ） |
+| `validate` | 設定検証 + タスクごとの次回発火プレビュー — デーモン不要 |
+| `install` | launch agent plist を書いてデーモンを起動（今すぐ + 以後のログイン時） |
+| `uninstall` | デーモンを停止し launch agent を削除 |
+| `version` | バージョン表示（`--version` でも可） |
 
-照会系コマンドは `--json`（API 生レスポンス）と `-config <dir>`（探索
-パスの明示上書き）を受け付けます。
+フラグは**位置引数より前**に置きます
+（例: `task-clock history -limit 5 analyze`）:
+
+- `-config <dir>` — 全コマンド。config 探索パスを明示上書き
+- `--json` — `status` / `list` / `history`。API の生レスポンスを出力
+- `-limit N` — `history` のみ。取得行数（既定 20）
 
 `status` は **next fire**（cron 式上の予定）と **next run**（ポリシー適用後の
 実行見込み）を区別します。予定を食い潰しているタスクは

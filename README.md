@@ -156,22 +156,29 @@ Hooks receive `TASK_CLOCK_EVENT`, `TASK_CLOCK_TASK`,
 coalesced backlog after sleep is deliberately not notified — sleeping is by
 design; the streak hook re-arms after an on-time fire.
 
-## Usage
+## Commands
 
-```bash
-task-clock serve                  # run the daemon in the foreground
-task-clock status                 # per-task state, next fire, overrun
-task-clock list                   # task definitions as the daemon sees them
-task-clock history analyze        # scheduled-vs-actual record (+ log paths)
-task-clock trigger analyze        # fire a task now
-task-clock pause analyze          # suspend scheduling until resume (survives restarts)
-task-clock resume analyze         # lift the pause (no backlog dump)
-task-clock reload                 # re-read tasks.d (also: SIGHUP)
-task-clock validate               # config check + next-fire preview
-```
+| Command | Does |
+|---|---|
+| `serve` | run the daemon in the foreground (normally launchd's job, via `install`) |
+| `status` | per-task state: next fire / next expected run / overrun / last run |
+| `list` | task definitions as the daemon sees them |
+| `history <task>` | the scheduled-vs-actual run record, with per-run log paths |
+| `trigger <task>` | fire a task now (allowed while paused; refused while already running) |
+| `pause <task>` | suspend scheduling until `resume` — survives daemon restarts |
+| `resume <task>` | lift a pause; a cron task resumes from the next *future* fire |
+| `reload` | apply `tasks.d/`, `[hooks]` and `retention_days` (SIGHUP does the same) |
+| `validate` | check the config and preview each task's next fire — needs no daemon |
+| `install` | write the launch agent plist and start the daemon, now and at every login |
+| `uninstall` | stop the daemon and remove the launch agent |
+| `version` | print the version (`--version` works too) |
 
-Every query command accepts `--json` for the raw API response and
-`-config <dir>` to bypass the search paths.
+Flags — note they go **before** positional arguments
+(`task-clock history -limit 5 analyze`):
+
+- `-config <dir>` — every command; bypasses the config search paths
+- `--json` — `status` / `list` / `history`; prints the raw API response
+- `-limit N` — `history` only; rows to return (default 20)
 
 `status` distinguishes **next fire** (what the cron expression says) from
 **next run** (what the policies will actually do): a task overrunning its
