@@ -3,7 +3,7 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-08-31
 
 ### Changed
 
@@ -12,6 +12,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
   (user feedback). Only `listen` / `api_key` / `data_dir` /
   `tick_interval` still need a restart, and the README now states the
   live-reload vs. restart boundary explicitly
+
+### Docs
+
+- README: full command reference (all twelve subcommands with flags and
+  the flags-before-positional convention), the three overlap policies
+  defined in place, the reload-vs-restart boundary as a lookup table, and
+  the self-referential sample-validation note removed
 
 ## [0.2.1] - 2026-08-31
 
