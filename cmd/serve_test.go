@@ -318,6 +318,41 @@ func TestValidateReportsConfigAndNextFires(t *testing.T) {
 	}
 }
 
+// Regression: validate panicked (nil Spec.Next) when a watermark task was
+// present — the next-fire preview assumed every task had a cron expression
+// (reported against v0.2.0).
+func TestValidateWatermarkTaskDoesNotPanic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"),
+		[]byte("[daemon]\napi_key = \"k\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "tasks.d"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repro := `
+[[task]]
+name      = "repro"
+watermark = "60m"
+command   = ["/bin/echo", "hello"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "tasks.d", "repro.toml"), []byte(repro), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errBuf bytes.Buffer
+	if code := Run([]string{"validate", "-config", dir}, &out, &errBuf, "t"); code != 0 {
+		t.Fatalf("validate exit %d: %s", code, errBuf.String())
+	}
+	s := out.String()
+	if !strings.Contains(s, "repro") || !strings.Contains(s, "after the last success") {
+		t.Errorf("watermark preview missing: %s", s)
+	}
+	if strings.Contains(s, "overlap=") {
+		t.Errorf("overlap/catch_up do not apply to watermark tasks and must not be shown: %s", s)
+	}
+}
+
 func waitCmd(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)

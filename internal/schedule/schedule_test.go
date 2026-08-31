@@ -45,6 +45,18 @@ func TestNextIsStrictlyAfter(t *testing.T) {
 	}
 }
 
+// The zero Spec must answer with the zero time, never a nil-pointer panic
+// (regression: v0.2.0 validate crashed through exactly this).
+func TestZeroSpecNextIsZeroTime(t *testing.T) {
+	var zero Spec
+	if !zero.IsZero() {
+		t.Fatal("zero Spec must report IsZero")
+	}
+	if got := zero.Next(at(t, "2026-08-31T10:00:00Z")); !got.IsZero() {
+		t.Errorf("zero Spec Next = %v, want zero time", got)
+	}
+}
+
 func TestParseRejectsInvalid(t *testing.T) {
 	for _, expr := range []string{"", "not a cron", "* * * *", "@reboot"} {
 		if _, err := Parse(expr); err == nil {

@@ -53,7 +53,18 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 			fmt.Fprintf(stdout, "  %-20s disabled (%s)\n", t.Name, relPathish(t.Source, dir))
 			continue
 		}
-		spec, _ := schedule.Parse(t.Cron)
+		// A watermark task has no cron expression to preview: its next due
+		// time is a function of the run history, which only the daemon
+		// holds — validate is config-only, so state the trigger semantics.
+		if t.IsWatermark() {
+			fmt.Fprintf(stdout, "  %-20s fires %s after the last success (first run: immediately)\n",
+				t.Name, t.Watermark.Value())
+			continue
+		}
+		spec, err := schedule.Parse(t.Cron)
+		if err != nil {
+			continue // unreachable after Validate; never worth a panic
+		}
 		next := spec.Next(now)
 		fmt.Fprintf(stdout, "  %-20s next fire %s (in %s)  overlap=%s catch_up=%t\n",
 			t.Name, fmtLocal(next), fmtDur(next.Sub(now)), t.OverlapPolicy(), t.CatchUpEnabled())

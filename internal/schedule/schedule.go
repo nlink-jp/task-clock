@@ -36,8 +36,16 @@ func Parse(expr string) (Spec, error) {
 	return Spec{inner: sched, raw: expr}, nil
 }
 
-// Next returns the first fire time strictly after t.
-func (s Spec) Next(t time.Time) time.Time { return s.inner.Next(t) }
+// Next returns the first fire time strictly after t. The zero Spec returns
+// the zero time instead of panicking — a caller that forgot IsZero gets a
+// checkable non-answer, not a SIGSEGV (this exact footgun shipped once:
+// validate's preview called Next on an unparsed watermark task's Spec).
+func (s Spec) Next(t time.Time) time.Time {
+	if s.inner == nil {
+		return time.Time{}
+	}
+	return s.inner.Next(t)
+}
 
 // String returns the original expression text.
 func (s Spec) String() string { return s.raw }
