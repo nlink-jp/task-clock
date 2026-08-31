@@ -388,3 +388,18 @@ func (e *Engine) KillAll() {
 		}
 	}
 }
+
+// RunningCount reports how many tasks have a live run. Shutdown drains on
+// it so killed runs get their finish recorded before the process exits —
+// otherwise they would sit in the history as "running" forever.
+func (e *Engine) RunningCount() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	n := 0
+	for _, name := range e.order {
+		if e.tasks[name].running != nil {
+			n++
+		}
+	}
+	return n
+}

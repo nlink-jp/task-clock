@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nlink-jp/task-clock/internal/store"
 )
 
 // freePort grabs an ephemeral port for the test daemon. The tiny window
@@ -144,6 +146,65 @@ command = ["/bin/true"]
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serve did not stop")
+	}
+}
+
+// A task still running at shutdown must not stay "running" in the history
+// forever: shutdown kills it and drains until the kill is recorded.
+func TestShutdownRecordsKilledRuns(t *testing.T) {
+	port := freePort(t)
+	dataDir := t.TempDir()
+	dir := writeServeConfig(t, port, dataDir)
+	long := `
+[[task]]
+name    = "long-task"
+cron    = "0 0 1 1 *"
+command = ["/bin/sleep", "30"]
+`
+	if err := os.WriteFile(filepath.Join(dir, "tasks.d", "long.toml"), []byte(long), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	serveTestStop = make(chan struct{})
+	defer func() { serveTestStop = nil }()
+	serveDone := make(chan int, 1)
+	var serveOut, serveErr bytes.Buffer
+	go func() {
+		serveDone <- Run([]string{"serve", "-config", dir}, &serveOut, &serveErr, "t")
+	}()
+
+	waitCmd(t, "daemon up", func() bool {
+		var out, errBuf bytes.Buffer
+		return Run([]string{"status", "-config", dir}, &out, &errBuf, "t") == 0
+	})
+	var out, errBuf bytes.Buffer
+	if code := Run([]string{"trigger", "-config", dir, "long-task"}, &out, &errBuf, "t"); code != 0 {
+		t.Fatalf("trigger failed: %s", errBuf.String())
+	}
+
+	close(serveTestStop)
+	select {
+	case <-serveDone:
+	case <-time.After(15 * time.Second):
+		t.Fatal("serve did not stop")
+	}
+
+	// The daemon is gone, so read the history directly (test-only access;
+	// the runtime contract stays the HTTP API).
+	st, err := store.Open(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	run, err := st.LastRun("long-task")
+	if err != nil || run == nil {
+		t.Fatalf("no history row: %v", err)
+	}
+	if run.FinishedAt == nil {
+		t.Fatalf("killed run left as running forever: %+v", run)
+	}
+	if run.ExitCode == nil || *run.ExitCode >= 0 {
+		t.Errorf("killed run should record a signal exit, got %+v", run.ExitCode)
 	}
 }
 
