@@ -1,0 +1,26 @@
+# task-clock daemon configuration.
+#
+# Place as: ~/.config/task-clock/config.toml   (chmod 600 — it holds api_key)
+# Also searched: $TASK_CLOCK_CONFIG_DIR, $XDG_CONFIG_HOME/task-clock,
+#                ~/Library/Application Support/task-clock
+#
+# Task definitions live in tasks.d/*.toml next to this file
+# (see task.example.toml).
+
+[daemon]
+# API key for the localhost HTTP API. Required — the daemon refuses to
+# start without one. Generate with:  openssl rand -hex 32
+api_key = "REPLACE-WITH-openssl-rand-hex-32"
+
+# Listen address. Loopback only; non-loopback addresses are rejected.
+#listen = "127.0.0.1:17282"
+
+# Scheduler tick interval. The worst-case fire delay is bounded by this.
+#tick_interval = "10s"
+
+# How long run history and captured task logs are kept.
+#retention_days = 30
+
+# Where the run history (SQLite) and per-run logs live. Must be an
+# absolute path. Default: ~/Library/Application Support/task-clock
+#data_dir = "/Users/you/Library/Application Support/task-clock"

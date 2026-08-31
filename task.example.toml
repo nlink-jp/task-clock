@@ -1,0 +1,40 @@
+# Example task definitions. Place files like this one in:
+#   ~/.config/task-clock/tasks.d/<anything>.toml
+# Each file may hold any number of [[task]] tables; task names must be
+# unique across all files. Apply changes with:  task-clock reload
+
+# The default form: an argv array, executed directly (no shell). ${VAR} is
+# expanded by task-clock itself — from [task.env] first, then the daemon's
+# environment — and an undefined variable is an error, never an empty string.
+[[task]]
+name    = "analyze"
+cron    = "*/30 * * * *"
+command = ["${HOME}/bin/run-analysis", "--incremental"]
+workdir = "${HOME}/analysis"
+timeout = "25m"
+# overlap:  queue-one (default) | skip | kill-and-restart
+#   queue-one: a fire during a run waits and runs right after it (one deep)
+#   skip:      a fire during a run is dropped (recorded as missed)
+#   kill-and-restart: the running task is killed, the new fire runs
+#overlap  = "queue-one"
+# catch_up: run a fire that was delayed past its time (sleep, timer delay)
+# as soon as it is noticed. Default true.
+#catch_up = true
+
+[task.env]
+ANALYSIS_PROFILE = "batch"
+
+# Shell form: opt in with shell = true and a single command string,
+# interpreted by /bin/sh -c (the shell then owns quoting and expansion).
+[[task]]
+name    = "disk-report"
+cron    = "0 7 * * 1"
+shell   = true
+command = "df -h | tee /tmp/disk-report.txt"
+
+# A task kept defined but not scheduled:
+#[[task]]
+#name    = "paused-job"
+#cron    = "0 3 * * *"
+#command = ["/usr/local/bin/backup"]
+#enabled = false
