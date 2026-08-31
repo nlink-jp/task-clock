@@ -86,8 +86,6 @@ config 探索順（`config.toml` を含む最初のディレクトリが有効�
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` + パイプ |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | レシピ: scli で定期 Slack 投稿（launchd の PATH に注意） |
 
-全サンプルはテストスイートが validate するため、腐りません。
-
 **リロードで反映されるもの / 再起動が必要なもの**: タスク定義
 （`tasks.d/`）・`[hooks]`・`retention_days` は `task-clock reload`
 （`POST /v1/reload`・SIGHUP・GUI の Reload ボタンでも同じ）で反映され、

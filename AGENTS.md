@@ -58,6 +58,9 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
   展開は argv 配列と workdir のみ（shell 形式はシェル自身に任せる）。
 - config は strict decode — 未知キーはエラー。フィールド追加時は
   config_test.go の typo テストを壊さないよう注意。
+- examples/tasks.d/ の全サンプルは TestShippedExamplesValidate が
+  Load+Validate に通す — フィールドの追加・改名でサンプルがずれると
+  テストが落ちる（README にはこの保証を書かない: 利用者向け情報ではない）。
 - `serve` は api_key 未設定・キー入りファイルが group/other 可読なら
   **起動拒否**（fail-closed）。テストがこの文言に依存している。
 - plist には launchd タイマーキー（StartInterval 等）を**絶対に入れない**

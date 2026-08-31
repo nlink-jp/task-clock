@@ -87,8 +87,6 @@ your `tasks.d/` and edit:
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` with pipes |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | recipe: periodic Slack post via scli (mind the launchd PATH) |
 
-Every sample is validated by the test suite, so they cannot go stale.
-
 **What reloads live vs. what needs a restart**: task definitions
 (`tasks.d/`), `[hooks]`, and `retention_days` apply via
 `task-clock reload` (also `POST /v1/reload`, SIGHUP, or the GUI's Reload
