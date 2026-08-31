@@ -24,6 +24,26 @@ timeout = "25m"
 [task.env]
 ANALYSIS_PROFILE = "batch"
 
+# Watermark trigger: fire N after the last SUCCESS instead of on a cron
+# grid. Built for variable-duration batch jobs (e.g. AI-agent launches):
+# however a fire was lost, the elapsed-since-success condition re-arms.
+# Mutually exclusive with cron; overlap/catch_up/jitter do not apply.
+# A failing run retries one interval after its last attempt (no crash-loop).
+[[task]]
+name      = "ai-batch"
+watermark = "30m"
+command   = ["${HOME}/bin/agent-batch", "--incremental"]
+timeout   = "25m"
+
+# jitter spreads tasks sharing a cron expression: the start is delayed by a
+# deterministic 0..jitter offset (hash of task name and fire time), so
+# `task-clock status` still shows the exact planned start.
+#[[task]]
+#name    = "nightly-sync"
+#cron    = "0 3 * * *"
+#command = ["/usr/local/bin/sync-all"]
+#jitter  = "5m"
+
 # Shell form: opt in with shell = true and a single command string,
 # interpreted by /bin/sh -c (the shell then owns quoting and expansion).
 [[task]]

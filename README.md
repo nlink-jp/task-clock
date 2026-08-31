@@ -22,8 +22,16 @@ commands), and records everything launchd does not.
   as an explicit state ("overrun 12m"), never a silent stall
 - **Task output captured**: each run's combined stdout+stderr is saved to a
   per-run log file, referenced from the history, and pruned by retention
+- **Watermark trigger**: fire N minutes after the last *successful* run —
+  built for variable-duration batch jobs such as AI-agent launches;
+  however a fire was lost, the elapsed-since-success condition re-arms
+- **Notification hooks**: run any command on `on_missed` / `on_failure` /
+  `on_overrun_streak` (the early warning for the feedback loop that
+  motivated this tool), with event details in `TASK_CLOCK_*` env vars
 - **HTTP trigger API** (localhost, static-key Bearer auth) for firing tasks
-  from other tools
+  from other tools, plus runtime `pause` / `resume`
+- **Deterministic jitter** to spread tasks sharing a cron expression —
+  hashed from task and fire time, so `next_fire` stays queryable
 - **No shell surprises**: commands are argv arrays with `${VAR}` expansion
   done by task-clock itself; undefined variables are errors, and
   `/bin/sh -c` is strictly opt-in
@@ -81,7 +89,8 @@ group/other-readable config file that holds one (`chmod 600`).
 | Field | Meaning | Default |
 |---|---|---|
 | `name` | unique task name (`[A-Za-z0-9][A-Za-z0-9._-]*`) | required |
-| `cron` | 5-field cron expression or `@hourly` etc. | required |
+| `cron` | 5-field cron expression or `@hourly` etc. | one of cron / watermark |
+| `watermark` | fire this long after the last success (e.g. `"30m"`); mutually exclusive with `cron`, and `overlap` / `catch_up` / `jitter` do not apply | one of cron / watermark |
 | `command` | argv array; string only with `shell = true` | required |
 | `shell` | interpret `command` via `/bin/sh -c` | `false` |
 | `workdir` | working directory (`${VAR}` expanded) | inherit |
@@ -89,7 +98,26 @@ group/other-readable config file that holds one (`chmod 600`).
 | `timeout` | kill the run after this duration (e.g. `"25m"`) | none |
 | `overlap` | `queue-one` \| `skip` \| `kill-and-restart` | `queue-one` |
 | `catch_up` | run a delayed fire as soon as noticed | `true` |
+| `jitter` | spread the start by a deterministic 0..jitter offset | none |
 | `enabled` | schedule this task | `true` |
+
+### Notification hooks
+
+Optional `[hooks]` table in `config.toml` (changes need a daemon restart):
+
+```toml
+[hooks]
+on_failure        = ["swrite", "-c", "alerts"]   # non-zero exit or killed
+on_missed         = ["swrite", "-c", "alerts"]   # dropped fire (overlap / catch_up off)
+on_overrun_streak = ["swrite", "-c", "alerts"]   # N consecutive not-on-time fires
+overrun_streak_threshold = 3
+```
+
+Hooks receive `TASK_CLOCK_EVENT`, `TASK_CLOCK_TASK`,
+`TASK_CLOCK_SCHEDULED_FOR`, `TASK_CLOCK_REASON`, `TASK_CLOCK_EXIT_CODE`,
+`TASK_CLOCK_ERROR`, and `TASK_CLOCK_STREAK` in the environment. The
+coalesced backlog after sleep is deliberately not notified — sleeping is by
+design; the streak hook re-arms after an on-time fire.
 
 ## Usage
 
@@ -99,6 +127,8 @@ task-clock status                 # per-task state, next fire, overrun
 task-clock list                   # task definitions as the daemon sees them
 task-clock history analyze        # scheduled-vs-actual record (+ log paths)
 task-clock trigger analyze        # fire a task now
+task-clock pause analyze          # suspend scheduling (until resume/restart)
+task-clock resume analyze         # lift the pause (no backlog dump)
 task-clock reload                 # re-read tasks.d (also: SIGHUP)
 task-clock validate               # config check + next-fire preview
 ```
@@ -121,6 +151,7 @@ Localhost only. Every endpoint except `/v1/healthz` requires
 | `GET /v1/tasks` | all tasks: status + last run |
 | `GET /v1/tasks/{name}` | one task |
 | `POST /v1/tasks/{name}/trigger` | fire a task (409 if already running) |
+| `POST /v1/tasks/{name}/pause` / `.../resume` | suspend / restore scheduling |
 | `GET /v1/tasks/{name}/history?limit=N` | run history |
 | `POST /v1/reload` | re-read tasks.d |
 | `GET /v1/healthz` | liveness (unauthenticated, static) |

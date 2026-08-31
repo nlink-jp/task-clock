@@ -22,8 +22,16 @@ cron 式を自前で評価してタスク（汎用シェルコマンド）を起
   状態として表示され、無言の停滞にはならない
 - **タスク出力の収集**: 各 run の stdout+stderr 統合ログを run 単位で保存し、
   履歴から参照可能。保持期間で自動削除
+- **ウォーターマーク型トリガー**: 前回*成功*から N 分で発火 — AI エージェント
+  起動のような実行時間が変動するバッチ向け。どの経路で発火を失っても
+  「成功からの経過時間」条件が再武装する
+- **通知 hook**: `on_missed` / `on_failure` / `on_overrun_streak`（本ツールの
+  発端になった正帰還ループの早期警報）に任意コマンドを登録。イベント詳細は
+  `TASK_CLOCK_*` 環境変数で渡る
 - **HTTP トリガー API**（localhost 限定・静的キー Bearer 認証）で他ツール
-  から発火可能
+  から発火可能。実行時の `pause` / `resume` も API/CLI から
+- **決定的 jitter**: 同じ cron 式を共有するタスクの起動を分散。タスク名×
+  発火時刻のハッシュで決まるため `next_fire` の照会可能性は保たれる
 - **シェルの不意打ちなし**: コマンドは argv 配列 + task-clock 自身による
   `${VAR}` 展開。未定義変数はエラー、`/bin/sh -c` は明示的 opt-in
 
@@ -80,7 +88,8 @@ openssl rand -hex 32
 | フィールド | 意味 | 既定値 |
 |---|---|---|
 | `name` | 一意なタスク名（`[A-Za-z0-9][A-Za-z0-9._-]*`） | 必須 |
-| `cron` | 5 フィールド cron 式、`@hourly` 等も可 | 必須 |
+| `cron` | 5 フィールド cron 式、`@hourly` 等も可 | cron / watermark どちらか必須 |
+| `watermark` | 前回成功からこの時間で発火（例 `"30m"`）。`cron` と排他、`overlap` / `catch_up` / `jitter` は適用外 | cron / watermark どちらか必須 |
 | `command` | argv 配列。文字列は `shell = true` 時のみ | 必須 |
 | `shell` | `command` を `/bin/sh -c` で解釈 | `false` |
 | `workdir` | 作業ディレクトリ（`${VAR}` 展開あり） | 継承 |
@@ -88,7 +97,26 @@ openssl rand -hex 32
 | `timeout` | 超過で kill（例 `"25m"`） | なし |
 | `overlap` | `queue-one` \| `skip` \| `kill-and-restart` | `queue-one` |
 | `catch_up` | 遅延した発火を気づいた時点で実行 | `true` |
+| `jitter` | 起動を 0〜jitter の決定的オフセットで分散 | なし |
 | `enabled` | スケジュール対象にする | `true` |
+
+### 通知 hook
+
+`config.toml` の `[hooks]` テーブル（変更はデーモン再起動が必要）:
+
+```toml
+[hooks]
+on_failure        = ["swrite", "-c", "alerts"]   # 非ゼロ exit / kill
+on_missed         = ["swrite", "-c", "alerts"]   # 発火の喪失 (overlap / catch_up off)
+on_overrun_streak = ["swrite", "-c", "alerts"]   # N 回連続で定刻に開始できず
+overrun_streak_threshold = 3
+```
+
+hook には `TASK_CLOCK_EVENT` / `TASK_CLOCK_TASK` / `TASK_CLOCK_SCHEDULED_FOR` /
+`TASK_CLOCK_REASON` / `TASK_CLOCK_EXIT_CODE` / `TASK_CLOCK_ERROR` /
+`TASK_CLOCK_STREAK` が環境変数で渡ります。スリープ復帰時の coalesced
+バックログは仕様どおりの挙動なので**意図的に通知しません**。streak hook は
+定刻発火で再武装します。
 
 ## 使い方
 
@@ -98,6 +126,8 @@ task-clock status                 # タスク状態・次回発火・超過
 task-clock list                   # デーモンが見ているタスク定義
 task-clock history analyze        # 予定 vs 実績の履歴（ログパス付き）
 task-clock trigger analyze        # 今すぐ発火
+task-clock pause analyze          # スケジュール停止（resume か再起動まで）
+task-clock resume analyze         # 再開（停止中の発火はバックログ投入しない）
 task-clock reload                 # tasks.d 再読込（SIGHUP でも可）
 task-clock validate               # 設定検証 + 次回発火プレビュー
 ```
@@ -119,6 +149,7 @@ localhost 限定。`/v1/healthz` 以外は `Authorization: Bearer <api_key>` 必
 | `GET /v1/tasks` | 全タスクの状態 + 最終 run |
 | `GET /v1/tasks/{name}` | 単一タスク |
 | `POST /v1/tasks/{name}/trigger` | 発火（実行中なら 409） |
+| `POST /v1/tasks/{name}/pause` / `.../resume` | スケジュール停止 / 再開 |
 | `GET /v1/tasks/{name}/history?limit=N` | 履歴 |
 | `POST /v1/reload` | tasks.d 再読込 |
 | `GET /v1/healthz` | 死活（認証不要・静的応答） |

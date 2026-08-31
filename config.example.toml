@@ -24,3 +24,13 @@ api_key = "REPLACE-WITH-openssl-rand-hex-32"
 # Where the run history (SQLite) and per-run logs live. Must be an
 # absolute path. Default: ~/Library/Application Support/task-clock
 #data_dir = "/Users/you/Library/Application Support/task-clock"
+
+# Notification hooks (optional). Each is an argv array run when the event
+# occurs, with details in TASK_CLOCK_* environment variables
+# (EVENT/TASK/SCHEDULED_FOR/REASON/EXIT_CODE/ERROR/STREAK).
+# Coalesced sleep backlog is deliberately not notified.
+#[hooks]
+#on_failure        = ["swrite", "-c", "alerts"]  # non-zero exit or killed
+#on_missed         = ["swrite", "-c", "alerts"]  # dropped fire (overlap / catch_up off)
+#on_overrun_streak = ["swrite", "-c", "alerts"]  # N consecutive not-on-time fires
+#overrun_streak_threshold = 3

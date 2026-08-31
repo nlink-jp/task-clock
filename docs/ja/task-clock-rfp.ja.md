@@ -161,5 +161,6 @@ Reason: 常駐デーモン + CLI + 別プロジェクト GUI という構成は 
 - **コマンド形式**: argv 配列 + task-clock 自身による `${VAR}` 展開（mcp.json 方式、ユーザー提案）。シェルは opt-in。未定義変数はエラー
 - **プラットフォーム**: macOS 専用に決定（問題領域が launchd 固有）
 - **App Nap 対策**: ユーザー指摘により明示要件化。短周期 ticker ポーリング + `ProcessType: Interactive` + ドリフト自己計測、cgo assertion は Phase 2 contingency
+- **Phase 2 実装の設計決定 (2026-08-31)**: (1) watermark は cron と**排他**とし、発火条件は「max(前回成功, 前回試行開始) + interval」— 失敗時のクラッシュループを構造的に排除し、状態は履歴から復元。実行中は再評価しないため overlap/catch_up/jitter は適用外（設定すると validate エラー）。(2) 通知 hook のイベント詳細は TASK_CLOCK_* 環境変数渡し（argv テンプレート不採用）。coalesced（スリープ由来）は意図的に非通知。streak は閾値ちょうどで 1 回発火し on_time で再武装。(3) pause は runtime-only とし、pause 中の発火は記録もしない（意図的沈黙は事故ではない）。resume はバックログを投入しない。(4) jitter は hash(タスク名, 発火時刻) の決定的オフセット — next_fire の純関数性（本ツールの核心的差別化）を乱数で壊さないため
 - **API 認証の確定 (2026-08-31)**: ユーザー要望により「config ファイルに静的キー」の簡易実装で明文化。簡易さの中で守る定石のみ義務化 — fail-closed（キー未設定は起動拒否）、Bearer ヘッダ、定数時間比較、config 権限検査（0600）、キー非ログ、127.0.0.1 固定、CORS 拒否。レートリミットは localhost 脅威モデルでは過剰として意図的に非搭載
 - **事故マシンの追調査 (2026-08-31)**: AI による調査でも原因特定に至らず（unified log の保持期間の制約もあり過去事象の追跡は困難）。「実行されなかった理由すら残らない」という launchd の可観測性欠陥の実証例として Problem Statement を裏づける。真因不明のまま設計する前提とし、ポリシー既定値を防御的（overlap = queue-one、catch-up = 有効）に決定
