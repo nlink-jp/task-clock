@@ -97,6 +97,27 @@ type DaemonConfig struct {
 	DataDir       string   `toml:"data_dir"`
 }
 
+// HooksConfig is the [hooks] table of config.toml: commands (argv arrays)
+// the daemon runs on notable events. The daemon carries no notification
+// implementation of its own — swrite, osascript, anything goes (RFP §2).
+// Hook changes need a daemon restart, like the rest of config.toml.
+type HooksConfig struct {
+	// OnMissed runs when a fire is dropped for an actionable reason
+	// (overlap, catch_up_disabled) — not for coalesced backlog, which is
+	// the by-design result of sleep.
+	OnMissed []string `toml:"on_missed"`
+	// OnFailure runs when a run finishes with a non-zero exit or is killed.
+	OnFailure []string `toml:"on_failure"`
+	// OnOverrunStreak runs when a task's fires have not started on time
+	// this many times in a row — the early warning for the positive-
+	// feedback loop that motivated task-clock.
+	OnOverrunStreak        []string `toml:"on_overrun_streak"`
+	OverrunStreakThreshold int      `toml:"overrun_streak_threshold"`
+}
+
+// DefaultOverrunStreakThreshold is used when the config leaves it unset.
+const DefaultOverrunStreakThreshold = 3
+
 // TaskConfig is one [[task]] table from tasks.d/*.toml.
 //
 // Exactly one of Cron and Watermark defines the trigger. A watermark task
@@ -178,6 +199,7 @@ func (t *TaskConfig) ResolvedWorkdir(outer func(string) (string, bool)) (string,
 // Config is the fully loaded configuration.
 type Config struct {
 	Daemon DaemonConfig
+	Hooks  HooksConfig
 	Tasks  []TaskConfig
 
 	Dir      string // config directory the files were read from
@@ -186,6 +208,7 @@ type Config struct {
 
 type daemonFile struct {
 	Daemon DaemonConfig `toml:"daemon"`
+	Hooks  HooksConfig  `toml:"hooks"`
 }
 
 type tasksFile struct {
@@ -207,7 +230,11 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	cfg.Daemon = df.Daemon
+	cfg.Hooks = df.Hooks
 	applyDefaults(&cfg.Daemon)
+	if cfg.Hooks.OverrunStreakThreshold == 0 {
+		cfg.Hooks.OverrunStreakThreshold = DefaultOverrunStreakThreshold
+	}
 
 	if cfg.Daemon.APIKey != "" {
 		if err := checkKeyFilePermissions(cfg.FilePath); err != nil {
@@ -294,6 +321,21 @@ func (c *Config) Validate(lookupEnv func(string) (string, bool)) []error {
 	}
 	if c.Daemon.RetentionDays < 0 {
 		addf("[daemon] retention_days must be >= 0, got %d", c.Daemon.RetentionDays)
+	}
+	if c.Hooks.OverrunStreakThreshold < 1 {
+		addf("[hooks] overrun_streak_threshold must be >= 1, got %d", c.Hooks.OverrunStreakThreshold)
+	}
+	for _, hook := range []struct {
+		name string
+		argv []string
+	}{
+		{"on_missed", c.Hooks.OnMissed},
+		{"on_failure", c.Hooks.OnFailure},
+		{"on_overrun_streak", c.Hooks.OnOverrunStreak},
+	} {
+		if len(hook.argv) > 0 && strings.TrimSpace(hook.argv[0]) == "" {
+			addf("[hooks] %s: empty command", hook.name)
+		}
 	}
 
 	seen := map[string]string{}

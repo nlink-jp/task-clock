@@ -49,7 +49,10 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 	}
 	defer st.Close()
 
-	eng := engine.New(clock.Real{}, st, engine.ExecRunner{}, engine.Options{})
+	eng := engine.New(clock.Real{}, st, engine.ExecRunner{}, engine.Options{
+		Notify:                 makeHookNotifier(cfg.Hooks, stdout, stderr),
+		OverrunStreakThreshold: cfg.Hooks.OverrunStreakThreshold,
+	})
 	if err := eng.Configure(cfg.Tasks); err != nil {
 		return err
 	}

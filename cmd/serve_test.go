@@ -7,11 +7,32 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/nlink-jp/task-clock/internal/store"
 )
+
+// syncBuf is a concurrency-safe buffer: the serve loop and hook goroutines
+// write logs concurrently (harmless on os.Stdout, a data race on
+// bytes.Buffer).
+type syncBuf struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuf) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
 
 // freePort grabs an ephemeral port for the test daemon. The tiny window
 // between Close and reuse is acceptable in a local test.
@@ -26,7 +47,7 @@ func freePort(t *testing.T) int {
 	return port
 }
 
-func writeServeConfig(t *testing.T, port int, dataDir string) string {
+func writeServeConfig(t *testing.T, port int, dataDir string, extraConfig ...string) string {
 	t.Helper()
 	dir := t.TempDir()
 	daemon := fmt.Sprintf(`
@@ -36,6 +57,9 @@ api_key       = "e2e-test-key"
 tick_interval = "50ms"
 data_dir      = %q
 `, port, dataDir)
+	for _, extra := range extraConfig {
+		daemon += "\n" + extra + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(daemon), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +89,7 @@ func TestServeEndToEnd(t *testing.T) {
 	defer func() { serveTestStop = nil }()
 
 	serveDone := make(chan int, 1)
-	var serveOut, serveErr bytes.Buffer
+	var serveOut, serveErr syncBuf
 	go func() {
 		serveDone <- Run([]string{"serve", "-config", dir}, &serveOut, &serveErr, "e2e")
 	}()
@@ -149,6 +173,53 @@ command = ["/bin/true"]
 	}
 }
 
+// A failure hook configured in [hooks] runs with the event details in
+// TASK_CLOCK_* environment variables.
+func TestFailureHookRuns(t *testing.T) {
+	port := freePort(t)
+	dataDir := t.TempDir()
+	hookLog := filepath.Join(t.TempDir(), "hook.log")
+	hooks := fmt.Sprintf(`
+[hooks]
+on_failure = ["/bin/sh", "-c", "echo $TASK_CLOCK_EVENT $TASK_CLOCK_TASK $TASK_CLOCK_EXIT_CODE >> %s"]
+`, hookLog)
+	dir := writeServeConfig(t, port, dataDir, hooks)
+	failing := `
+[[task]]
+name    = "failing-task"
+cron    = "0 0 1 1 *"
+shell   = true
+command = "exit 3"
+`
+	if err := os.WriteFile(filepath.Join(dir, "tasks.d", "failing.toml"), []byte(failing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	serveTestStop = make(chan struct{})
+	defer func() { serveTestStop = nil }()
+	serveDone := make(chan int, 1)
+	var serveOut, serveErr syncBuf
+	go func() {
+		serveDone <- Run([]string{"serve", "-config", dir}, &serveOut, &serveErr, "t")
+	}()
+	waitCmd(t, "daemon up", func() bool {
+		var out, errBuf bytes.Buffer
+		return Run([]string{"status", "-config", dir}, &out, &errBuf, "t") == 0
+	})
+
+	var out, errBuf bytes.Buffer
+	if code := Run([]string{"trigger", "-config", dir, "failing-task"}, &out, &errBuf, "t"); code != 0 {
+		t.Fatalf("trigger failed: %s", errBuf.String())
+	}
+	waitCmd(t, "failure hook", func() bool {
+		data, err := os.ReadFile(hookLog)
+		return err == nil && strings.Contains(string(data), "failure failing-task 3")
+	})
+
+	close(serveTestStop)
+	<-serveDone
+}
+
 // A task still running at shutdown must not stay "running" in the history
 // forever: shutdown kills it and drains until the kill is recorded.
 func TestShutdownRecordsKilledRuns(t *testing.T) {
@@ -168,7 +239,7 @@ command = ["/bin/sleep", "30"]
 	serveTestStop = make(chan struct{})
 	defer func() { serveTestStop = nil }()
 	serveDone := make(chan int, 1)
-	var serveOut, serveErr bytes.Buffer
+	var serveOut, serveErr syncBuf
 	go func() {
 		serveDone <- Run([]string{"serve", "-config", dir}, &serveOut, &serveErr, "t")
 	}()

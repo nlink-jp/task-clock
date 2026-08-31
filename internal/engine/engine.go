@@ -69,11 +69,38 @@ type Runner interface {
 	Start(spec RunSpec) (Handle, error)
 }
 
+// Event types delivered to Options.Notify.
+const (
+	EventMissed        = "missed"         // a fire was dropped (actionable reasons only)
+	EventFailure       = "failure"        // a run exited non-zero or was killed
+	EventOverrunStreak = "overrun_streak" // N consecutive fires did not start on time
+)
+
+// Event is a notification-worthy occurrence. The engine only emits these;
+// what to do with them (hook commands) is the caller's business.
+type Event struct {
+	Type         string
+	Task         string
+	ScheduledFor time.Time
+	Reason       string // missed reason (EventMissed)
+	ExitCode     int    // EventFailure
+	Error        string // EventFailure detail
+	Streak       int    // EventOverrunStreak
+}
+
 // Options are the injectable dependencies beyond the required three.
 type Options struct {
 	LookupEnv   func(string) (string, bool) // defaults to os.LookupEnv
 	BaseEnv     func() []string             // defaults to os.Environ
 	OnTimeSlack time.Duration               // defaults to DefaultOnTimeSlack
+
+	// Notify receives events (on their own goroutines; ordering between
+	// events is not guaranteed). Nil disables emission.
+	Notify func(Event)
+	// OverrunStreakThreshold fires EventOverrunStreak when a task reaches
+	// exactly this many consecutive not-on-time fires; it re-arms after an
+	// on-time fire resets the streak.
+	OverrunStreakThreshold int
 }
 
 // Engine owns the per-task scheduling state.
@@ -100,6 +127,11 @@ type taskState struct {
 	// retries at the same cadence instead of crash-looping)".
 	lastSuccess      time.Time // finish time of the last exit-0 run
 	lastAttemptStart time.Time // start time of the last run, any outcome
+
+	// notOnTimeStreak counts consecutive fires that did not start on time
+	// (queued or missed) — the early warning for the positive-feedback
+	// loop that motivated task-clock.
+	notOnTimeStreak int
 }
 
 // watermarkDue returns when a watermark task is next due — a pure function
@@ -135,6 +167,9 @@ func New(clk clock.Clock, st *store.Store, runner Runner, opts Options) *Engine 
 	}
 	if opts.OnTimeSlack == 0 {
 		opts.OnTimeSlack = DefaultOnTimeSlack
+	}
+	if opts.OverrunStreakThreshold == 0 {
+		opts.OverrunStreakThreshold = config.DefaultOverrunStreakThreshold
 	}
 	return &Engine{
 		clock:  clk,
@@ -247,6 +282,7 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		if now.Sub(due) > e.opts.OnTimeSlack {
 			outcome = store.OutcomeQueued // ran, but later than due
 		}
+		e.noteFireOutcome(st, outcome == store.OutcomeOnTime)
 		e.startRunLocked(st, due, outcome, now)
 		return
 	}
@@ -285,6 +321,7 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 
 	if st.running == nil {
 		if late && !cfg.CatchUpEnabled() {
+			e.noteFireOutcome(st, false)
 			e.recordMissed(cfg.Name, fire, store.MissedCatchUpDisabled, "")
 			return
 		}
@@ -292,10 +329,12 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 		if late {
 			outcome = store.OutcomeQueued // ran, but later than scheduled
 		}
+		e.noteFireOutcome(st, outcome == store.OutcomeOnTime)
 		e.startRunLocked(st, fire, outcome, now)
 		return
 	}
 
+	e.noteFireOutcome(st, false) // a fire during a run never starts on time
 	switch cfg.OverlapPolicy() {
 	case config.OverlapSkip:
 		e.recordMissed(cfg.Name, fire, store.MissedOverlap, "")
@@ -321,6 +360,27 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 	}
 }
 
+// noteFireOutcome tracks the consecutive not-on-time streak and emits
+// EventOverrunStreak exactly when the threshold is reached; an on-time
+// fire re-arms it.
+func (e *Engine) noteFireOutcome(st *taskState, onTime bool) {
+	if onTime {
+		st.notOnTimeStreak = 0
+		return
+	}
+	st.notOnTimeStreak++
+	if st.notOnTimeStreak == e.opts.OverrunStreakThreshold {
+		e.notify(Event{Type: EventOverrunStreak, Task: st.cfg.Name, Streak: st.notOnTimeStreak})
+	}
+}
+
+// notify dispatches an event on its own goroutine (callers hold e.mu).
+func (e *Engine) notify(ev Event) {
+	if e.opts.Notify != nil {
+		go e.opts.Notify(ev)
+	}
+}
+
 func (e *Engine) recordMissed(task string, fire time.Time, reason, detail string) {
 	id, err := e.store.RecordMissed(task, fire, reason)
 	if err != nil {
@@ -328,6 +388,10 @@ func (e *Engine) recordMissed(task string, fire time.Time, reason, detail string
 	}
 	if detail != "" {
 		e.store.FinishRun(id, -1, detail, fire)
+	}
+	// Coalesced backlog is the by-design result of sleep — not notified.
+	if reason == store.MissedOverlap || reason == store.MissedCatchUpDisabled {
+		e.notify(Event{Type: EventMissed, Task: task, ScheduledFor: fire, Reason: reason})
 	}
 }
 
@@ -408,6 +472,14 @@ func (e *Engine) finishRun(task string, id int64, res Result) {
 		}
 	}
 	e.store.FinishRun(id, res.ExitCode, errMsg, now)
+
+	if res.ExitCode != 0 || errMsg != "" {
+		ev := Event{Type: EventFailure, Task: task, ExitCode: res.ExitCode, Error: errMsg}
+		if ok && st.running != nil && st.running.id == id {
+			ev.ScheduledFor = st.running.scheduledFor
+		}
+		e.notify(ev)
+	}
 
 	if !ok || st.running == nil || st.running.id != id {
 		return // task removed by reload, or a stale watcher
