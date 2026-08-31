@@ -1,0 +1,12 @@
+# Shell form: opt in with shell = true and a single command string,
+# interpreted by /bin/sh -c. Use it when the job needs pipes, redirects,
+# or command substitution — the shell then owns quoting and expansion
+# (task-clock's ${VAR} expansion applies to the argv form only).
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+
+[[task]]
+name    = "disk-report"
+cron    = "0 7 * * 1"             # Mondays 07:00
+shell   = true
+command = "df -h | tee /tmp/disk-report.txt"

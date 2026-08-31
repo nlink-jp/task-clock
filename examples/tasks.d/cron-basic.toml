@@ -1,0 +1,12 @@
+# The simplest task: a cron schedule and a command.
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+#
+# command is an argv array executed directly — no shell. ${VAR} is expanded
+# by task-clock itself ([task.env] first, then the daemon's environment),
+# and an undefined variable is an error, never a silent empty string.
+
+[[task]]
+name    = "cron-basic"
+cron    = "*/30 * * * *"          # every 30 minutes (5-field cron; @hourly etc. also work)
+command = ["${HOME}/bin/my-job", "--incremental"]

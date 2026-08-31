@@ -1,0 +1,19 @@
+# Watermark trigger: fire N after the last SUCCESS instead of on a cron
+# grid — built for variable-duration batch jobs (e.g. AI-agent launches)
+# where the real cost driver is the backlog since the last success.
+#
+# However a fire was lost (timer delay, overrun, sleep), the
+# elapsed-since-success condition re-arms: the task self-heals.
+# A failing run retries one interval after its last attempt (no crash-loop).
+# The clock survives daemon restarts (recovered from the run history).
+#
+# Mutually exclusive with cron; overlap / catch_up / jitter do not apply
+# (the trigger re-evaluates after every run, so there is nothing to queue).
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+
+[[task]]
+name      = "ai-batch"
+watermark = "30m"
+command   = ["${HOME}/bin/agent-batch", "--incremental"]
+timeout   = "25m"

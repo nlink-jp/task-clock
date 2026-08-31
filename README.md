@@ -74,8 +74,21 @@ Layout:
     └── *.toml       # [[task]] definitions, names unique across files
 ```
 
-Starter files: [config.example.toml](config.example.toml) and
-[task.example.toml](task.example.toml). Generate the API key with:
+Starter files: [config.example.toml](config.example.toml) for the daemon,
+and one task sample per pattern under
+[examples/tasks.d/](examples/tasks.d/) — copy the one that matches into
+your `tasks.d/` and edit:
+
+| Sample | Pattern |
+|---|---|
+| [cron-basic.toml](examples/tasks.d/cron-basic.toml) | the simplest cron + argv task |
+| [cron-all-options.toml](examples/tasks.d/cron-all-options.toml) | every knob, annotated (the reference) |
+| [watermark.toml](examples/tasks.d/watermark.toml) | fire N after the last success (AI-batch style) |
+| [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` with pipes |
+| [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | recipe: periodic Slack post via scli (mind the launchd PATH) |
+
+Every sample is validated by the test suite, so they cannot go stale.
+Generate the API key with:
 
 ```bash
 openssl rand -hex 32

@@ -1,0 +1,24 @@
+# Recipe: post a periodic system-status snapshot to Slack via scli
+# (https://github.com/nlink-jp/scli).
+#
+# Note the ABSOLUTE scli path: the launchd agent's PATH does not include
+# /opt/homebrew/bin, so bare command names that work in your terminal will
+# not resolve inside a task. Spell out the path for anything Homebrew-
+# installed. Replace CXXXXXXXXXX with your channel ID.
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+
+[[task]]
+name    = "slack-status-report"
+cron    = "0 9 * * *"             # daily 09:00 (every-minute works too — mind the noise)
+shell   = true
+timeout = "45s"
+command = '''
+msg="$(
+  printf '*system-status* %s %s\n' "$(hostname -s)" "$(date '+%Y-%m-%d %H:%M:%S')"
+  uptime
+  top -l 1 -n 0 | grep PhysMem
+  df -h / | tail -1 | awk '{print "disk /: " $3 " used of " $2 " (" $5 ")"}'
+)"
+/opt/homebrew/bin/scli post CXXXXXXXXXX "$msg"
+'''

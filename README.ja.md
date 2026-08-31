@@ -73,8 +73,21 @@ config 探索順（`config.toml` を含む最初のディレクトリが有効�
     └── *.toml       # [[task]] 定義。名前はファイル横断で一意
 ```
 
-雛形は [config.example.toml](config.example.toml) と
-[task.example.toml](task.example.toml)。API キーの生成:
+雛形はデーモン用の [config.example.toml](config.example.toml) と、
+**パターンごとに 1 ファイル**のタスクサンプル
+[examples/tasks.d/](examples/tasks.d/) — 該当するものを自分の `tasks.d/`
+にコピーして編集してください:
+
+| サンプル | パターン |
+|---|---|
+| [cron-basic.toml](examples/tasks.d/cron-basic.toml) | 最小の cron + argv タスク |
+| [cron-all-options.toml](examples/tasks.d/cron-all-options.toml) | 全オプション注釈付き（リファレンス） |
+| [watermark.toml](examples/tasks.d/watermark.toml) | 前回成功から N 分で発火（AI バッチ型） |
+| [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` + パイプ |
+| [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | レシピ: scli で定期 Slack 投稿（launchd の PATH に注意） |
+
+全サンプルはテストスイートが validate するため、腐りません。
+API キーの生成:
 
 ```bash
 openssl rand -hex 32

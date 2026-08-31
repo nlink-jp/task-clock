@@ -4,8 +4,10 @@
 # Also searched: $TASK_CLOCK_CONFIG_DIR, $XDG_CONFIG_HOME/task-clock,
 #                ~/Library/Application Support/task-clock
 #
-# Task definitions live in tasks.d/*.toml next to this file
-# (see task.example.toml).
+# Task definitions live in tasks.d/*.toml next to this file — one sample
+# per pattern under examples/tasks.d/ (cron-basic, cron-all-options,
+# watermark, shell-pipeline, slack-status-report): copy the one that
+# matches and edit.
 
 [daemon]
 # API key for the localhost HTTP API. Required — the daemon refuses to

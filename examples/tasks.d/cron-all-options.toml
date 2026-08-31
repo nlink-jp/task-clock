@@ -1,0 +1,37 @@
+# A cron task with every knob spelled out — the reference sample.
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+
+[[task]]
+name    = "cron-all-options"
+cron    = "0 * * * *"
+command = ["/usr/local/bin/backup", "--target", "${BACKUP_DIR}"]
+workdir = "${HOME}/work"          # working directory (${VAR} expanded)
+timeout = "25m"                   # kill the run after this long
+
+# What happens when a fire arrives while the previous run is still going:
+#   queue-one (default): the fire waits and runs right after (one deep)
+#   skip:                the fire is dropped, recorded as missed(overlap)
+#   kill-and-restart:    the running task is killed, the new fire runs
+overlap = "queue-one"
+
+# Run a fire that was delayed past its time (sleep, timer delay) as soon
+# as it is noticed. Default true.
+catch_up = true
+
+# Spread the start by a deterministic 0..jitter offset — use when several
+# tasks share a cron expression. `task-clock status` shows the real start.
+jitter = "2m"
+
+# Kill the run if its captured output exceeds this size (MB).
+# Default 0 = no cap — protective kills are opt-in.
+log_max_mb = 50
+
+# Keep the task defined but out of the schedule. For a temporary stop
+# prefer `task-clock pause <name>` (or the GUI switch) — it needs no
+# config edit and survives daemon restarts.
+enabled = true
+
+# Extra environment for the command — also the first source for ${VAR}.
+[task.env]
+BACKUP_DIR = "/Volumes/backup"

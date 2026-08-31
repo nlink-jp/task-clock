@@ -17,6 +17,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 
 ### Changed
 
+- Task samples split into one file per pattern under `examples/tasks.d/`
+  (cron-basic / cron-all-options / watermark / shell-pipeline /
+  slack-status-report), each validated by the test suite; the monolithic
+  `task.example.toml` is gone
 - pause now persists across daemon restarts (stored alongside the run
   history): it is the operational per-task off switch, layered under the
   config's declarative `enabled` — added so GUI clients can offer a durable
