@@ -87,6 +87,14 @@ config 探索順（`config.toml` を含む最初のディレクトリが有効�
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | レシピ: scli で定期 Slack 投稿（launchd の PATH に注意） |
 
 全サンプルはテストスイートが validate するため、腐りません。
+
+**リロードで反映されるもの / 再起動が必要なもの**: タスク定義
+（`tasks.d/`）・`[hooks]`・`retention_days` は `task-clock reload`
+（`POST /v1/reload`・SIGHUP・GUI の Reload ボタンでも同じ）で反映され、
+デーモン再起動は不要です。再起動が必要なのは構造的な `[daemon]` 設定 —
+`listen`・`api_key`・`data_dir`・`tick_interval` — のみ。リスナーを生きた
+まま差し替えると、リロード要求を運んでいる接続そのものを壊すためです。
+
 API キーの生成:
 
 ```bash
@@ -116,7 +124,8 @@ openssl rand -hex 32
 
 ### 通知 hook
 
-`config.toml` の `[hooks]` テーブル（変更はデーモン再起動が必要）:
+`config.toml` の `[hooks]` テーブル（`task-clock reload` で反映されます —
+再起動が必要なのは構造的なデーモン設定のみ、下記参照）:
 
 ```toml
 [hooks]

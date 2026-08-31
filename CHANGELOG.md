@@ -3,6 +3,16 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- `reload` now also applies `[hooks]` and `retention_days` — nothing about
+  them is structural, so requiring a restart was an arbitrary asymmetry
+  (user feedback). Only `listen` / `api_key` / `data_dir` /
+  `tick_interval` still need a restart, and the README now states the
+  live-reload vs. restart boundary explicitly
+
 ## [0.2.1] - 2026-08-31
 
 ### Fixed

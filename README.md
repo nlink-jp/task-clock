@@ -88,6 +88,15 @@ your `tasks.d/` and edit:
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | recipe: periodic Slack post via scli (mind the launchd PATH) |
 
 Every sample is validated by the test suite, so they cannot go stale.
+
+**What reloads live vs. what needs a restart**: task definitions
+(`tasks.d/`), `[hooks]`, and `retention_days` apply via
+`task-clock reload` (also `POST /v1/reload`, SIGHUP, or the GUI's Reload
+button) — no daemon restart. Only the structural `[daemon]` settings —
+`listen`, `api_key`, `data_dir`, `tick_interval` — need a restart, because
+swapping the listener live would tear down the very connection delivering
+the reload.
+
 Generate the API key with:
 
 ```bash
@@ -117,7 +126,8 @@ group/other-readable config file that holds one (`chmod 600`).
 
 ### Notification hooks
 
-Optional `[hooks]` table in `config.toml` (changes need a daemon restart):
+Optional `[hooks]` table in `config.toml` (applied by `task-clock reload`,
+like everything except the structural daemon settings — see below):
 
 ```toml
 [hooks]

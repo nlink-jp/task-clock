@@ -64,8 +64,10 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
   — install_test.go が禁止をピンしている。`ProcessType: Interactive` 必須。
 - serve ループのテストは `serveTestStop` チャネル（テスト専用フック、
   本番は nil で永久ブロック）で停止させる。
-- reload が反映するのは tasks.d のみ。listen / api_key / data_dir の変更は
-  再起動が必要（意図的 — reload を運んでいる接続自体を壊さないため）。
+- reload が反映するのは tasks.d + [hooks] + retention_days
+  （hooks は engine.SetNotifier で live swap）。listen / api_key /
+  data_dir / tick_interval の変更のみ再起動が必要（構造的 — reload を
+  運んでいる接続自体を壊さないため）。
 - 実行プロセスは自前の process group で起動（Setpgid）し、kill は
   `-pgid` へ SIGTERM → 5s 後 SIGKILL。stdout+stderr は run ごとの
   ログファイルへ統合保存。
