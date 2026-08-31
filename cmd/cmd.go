@@ -30,6 +30,8 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 		err = runHistory(rest, stdout, stderr)
 	case "trigger":
 		err = runTrigger(rest, stdout, stderr)
+	case "pause", "resume":
+		err = runPauseResume(args[0], rest, stdout, stderr)
 	case "reload":
 		err = runReload(rest, stdout, stderr)
 	case "validate":
@@ -76,6 +78,8 @@ Commands:
   list         show task definitions
   history      show scheduled-vs-actual run history for a task
   trigger      trigger a task manually
+  pause        suspend a task's scheduling (until resume or daemon restart)
+  resume       lift a pause (cron restarts from the next future fire)
   reload       reload config and tasks.d
   validate     validate config and preview each task's next fire
   install      generate and register the launchd plist (KeepAlive only)

@@ -132,6 +132,11 @@ type taskState struct {
 	// (queued or missed) — the early warning for the positive-feedback
 	// loop that motivated task-clock.
 	notOnTimeStreak int
+
+	// paused is runtime-only intentional silence (API pause/resume): fires
+	// are neither run nor recorded as missed, and the flag does not
+	// survive a daemon restart.
+	paused bool
 }
 
 // watermarkDue returns when a watermark task is next due — a pure function
@@ -213,6 +218,7 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 			st.queued = prev.queued
 			st.lastSuccess = prev.lastSuccess
 			st.lastAttemptStart = prev.lastAttemptStart
+			st.paused = prev.paused
 			if prev.cfg.Cron == t.Cron {
 				st.nextFire = prev.nextFire
 			}
@@ -259,7 +265,7 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		r.handle.Kill()
 	}
 
-	if !cfg.IsEnabled() {
+	if !cfg.IsEnabled() || st.paused {
 		return
 	}
 
@@ -514,6 +520,37 @@ func (e *Engine) Trigger(name string) error {
 	if st.running == nil {
 		return fmt.Errorf("task %s failed to launch (see history)", name)
 	}
+	return nil
+}
+
+// Pause suspends a task's scheduling (runtime-only; cleared on restart).
+// Fires during a pause are intentionally neither run nor recorded.
+func (e *Engine) Pause(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st, ok := e.tasks[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownTask, name)
+	}
+	st.paused = true
+	return nil
+}
+
+// Resume lifts a pause. A cron task restarts from the next future fire —
+// fires skipped during the pause do not dump in as backlog (the pause was
+// deliberate). A stale watermark task fires immediately, which is exactly
+// its elapsed-since-success semantic.
+func (e *Engine) Resume(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st, ok := e.tasks[name]
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownTask, name)
+	}
+	if st.paused && !st.cfg.IsWatermark() && !st.spec.IsZero() {
+		st.nextFire = st.spec.Next(e.clock.Now())
+	}
+	st.paused = false
 	return nil
 }
 

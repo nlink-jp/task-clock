@@ -25,6 +25,7 @@ type RunningStatus struct {
 type TaskStatus struct {
 	Name            string         `json:"name"`
 	Enabled         bool           `json:"enabled"`
+	Paused          bool           `json:"paused,omitempty"`
 	Cron            string         `json:"cron,omitempty"`
 	Watermark       string         `json:"watermark,omitempty"`
 	Overlap         string         `json:"overlap"`
@@ -68,6 +69,12 @@ func (e *Engine) Status() []TaskStatus {
 			}
 		}
 		if !ts.Enabled {
+			ts.NextExpectedRun = NextExpected{Kind: "none"}
+			out = append(out, ts)
+			continue
+		}
+		if st.paused {
+			ts.Paused = true
 			ts.NextExpectedRun = NextExpected{Kind: "none"}
 			out = append(out, ts)
 			continue

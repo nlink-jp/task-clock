@@ -60,6 +60,9 @@ func renderState(v api.TaskView, now time.Time) string {
 	if !v.Enabled {
 		return "disabled"
 	}
+	if v.Paused && v.Running == nil {
+		return "paused"
+	}
 	if v.Running != nil {
 		s := "running " + fmtDur(now.Sub(v.Running.StartedAt))
 		if v.OverrunSeconds > 0 {
@@ -259,6 +262,34 @@ func runTrigger(args []string, stdout, stderr io.Writer) error {
 		return apiError(body, code)
 	}
 	fmt.Fprintf(stdout, "triggered: %s\n", name)
+	return nil
+}
+
+// runPauseResume implements both pause and resume (they differ only in the
+// endpoint and the confirmation word).
+func runPauseResume(action string, args []string, stdout, stderr io.Writer) error {
+	var cf clientFlags
+	fs := newClientFlagSet(action, &cf)
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: task-clock %s [flags] <task>", action)
+	}
+	name := fs.Arg(0)
+	c, err := newClient(cf.configDir)
+	if err != nil {
+		return err
+	}
+	body, code, err := c.call("POST", "/v1/tasks/"+name+"/"+action)
+	if err != nil {
+		return err
+	}
+	if code != http.StatusOK {
+		return apiError(body, code)
+	}
+	fmt.Fprintf(stdout, "%sd: %s\n", action, name)
 	return nil
 }
 

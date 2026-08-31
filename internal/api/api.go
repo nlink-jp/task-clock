@@ -48,6 +48,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /v1/tasks", s.auth(s.handleTasks))
 	mux.Handle("GET /v1/tasks/{name}", s.auth(s.handleTask))
 	mux.Handle("POST /v1/tasks/{name}/trigger", s.auth(s.handleTrigger))
+	mux.Handle("POST /v1/tasks/{name}/pause", s.auth(s.handlePause))
+	mux.Handle("POST /v1/tasks/{name}/resume", s.auth(s.handleResume))
 	mux.Handle("GET /v1/tasks/{name}/history", s.auth(s.handleHistory))
 	mux.Handle("POST /v1/reload", s.auth(s.handleReload))
 	mux.Handle("/", s.auth(func(w http.ResponseWriter, r *http.Request) {
@@ -107,6 +109,22 @@ func (s *Server) handleTrigger(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusInternalServerError, "launch_failed")
 	}
+}
+
+func (s *Server) handlePause(w http.ResponseWriter, r *http.Request) {
+	if err := s.engine.Pause(r.PathValue("name")); err != nil {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "paused": true})
+}
+
+func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
+	if err := s.engine.Resume(r.PathValue("name")); err != nil {
+		writeError(w, http.StatusNotFound, "not_found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "paused": false})
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {

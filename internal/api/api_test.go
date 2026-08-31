@@ -180,6 +180,34 @@ func TestTriggerAndConflict(t *testing.T) {
 	}
 }
 
+func TestPauseResumeEndpoints(t *testing.T) {
+	srv, runner, _ := newTestServer(t, nil)
+	resp, body := request(t, "POST", srv.URL+"/v1/tasks/analyze/pause", testKey)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("pause = %d (%s)", resp.StatusCode, body)
+	}
+	resp, body = request(t, "GET", srv.URL+"/v1/tasks/analyze", testKey)
+	if resp.StatusCode != http.StatusOK || !json.Valid(body) {
+		t.Fatalf("detail = %d", resp.StatusCode)
+	}
+	var view struct {
+		Paused bool `json:"paused"`
+	}
+	json.Unmarshal(body, &view)
+	if !view.Paused {
+		t.Errorf("task not paused: %s", body)
+	}
+	resp, _ = request(t, "POST", srv.URL+"/v1/tasks/analyze/resume", testKey)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("resume = %d", resp.StatusCode)
+	}
+	resp, _ = request(t, "POST", srv.URL+"/v1/tasks/nope/pause", testKey)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("pause unknown = %d, want 404", resp.StatusCode)
+	}
+	_ = runner
+}
+
 func TestHistoryEndpoint(t *testing.T) {
 	srv, _, st := newTestServer(t, nil)
 	when := time.Date(2026, 8, 31, 9, 30, 0, 0, time.UTC)
