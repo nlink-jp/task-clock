@@ -3,6 +3,17 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.1] - 2026-08-31
+
+### Fixed
+
+- `task-clock validate` panicked (nil pointer in `Spec.Next`) when any
+  watermark task was defined: the next-fire preview assumed every task had
+  a cron expression. Watermark tasks now preview their trigger semantics
+  ("fires N after the last success"), and the zero `schedule.Spec` answers
+  `Next` with the zero time instead of crashing. (Reported by a user —
+  thanks for the precise root-cause analysis.)
+
 ## [0.2.0] - 2026-08-31
 
 ### Added
