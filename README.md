@@ -127,6 +127,16 @@ group/other-readable config file that holds one (`chmod 600`).
 | `jitter` | spread the start by a deterministic 0..jitter offset | none |
 | `enabled` | schedule this task | `true` |
 
+`overlap` decides what happens to a fire that arrives while the previous
+run is still going:
+
+- `queue-one` (default) — the fire waits and runs immediately after the
+  current run finishes, one deep; further fires arriving while one is
+  already queued are dropped as `missed(overlap)`
+- `skip` — the fire is dropped and recorded as `missed(overlap)`
+- `kill-and-restart` — the running task is killed (its history row says
+  so) and the new fire runs
+
 ### Notification hooks
 
 Optional `[hooks]` table in `config.toml` (applied by `task-clock reload`,

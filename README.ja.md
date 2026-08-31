@@ -126,6 +126,16 @@ openssl rand -hex 32
 | `jitter` | 起動を 0〜jitter の決定的オフセットで分散 | なし |
 | `enabled` | スケジュール対象にする | `true` |
 
+`overlap` は「前回の run がまだ実行中のときに次の発火が来たらどうするか」を
+決めます:
+
+- `queue-one`（既定）— 発火は待機し、実行中の run が終わった直後に実行
+  （キューは 1 件まで）。待機中にさらに来た発火は `missed(overlap)` として
+  記録され捨てられる
+- `skip` — 発火を捨て、`missed(overlap)` として記録する
+- `kill-and-restart` — 実行中の run を kill し（履歴にその旨が残る）、
+  新しい発火を実行する
+
 ### 通知 hook
 
 `config.toml` の `[hooks]` テーブル（`task-clock reload` で反映されます —
