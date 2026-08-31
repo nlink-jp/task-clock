@@ -425,6 +425,19 @@ func (e *Engine) notify(ev Event) {
 	}
 }
 
+// SetNotifier swaps the event callback and streak threshold at runtime —
+// hook config is reloadable because nothing about it is structural, unlike
+// listen/api_key whose live swap would tear down the very connection
+// delivering the reload.
+func (e *Engine) SetNotifier(notify func(Event), overrunStreakThreshold int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.opts.Notify = notify
+	if overrunStreakThreshold > 0 {
+		e.opts.OverrunStreakThreshold = overrunStreakThreshold
+	}
+}
+
 func (e *Engine) recordMissed(task string, fire time.Time, reason, detail string) {
 	id, err := e.store.RecordMissed(task, fire, reason)
 	if err != nil {

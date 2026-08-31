@@ -111,6 +111,27 @@ func TestCoalescedBacklogEmitsNoMissedEvent(t *testing.T) {
 	}
 }
 
+// SetNotifier swaps the hook wiring at runtime (config reload): events
+// after the swap reach only the new callback, and a new threshold applies.
+func TestSetNotifierSwapsAtRuntime(t *testing.T) {
+	start := at(t, "2026-08-31T10:00:00Z")
+	e, _, runner, oldSink := newEventEngine(t, start, 3, task("a", "0 0 1 1 *"))
+
+	newSink := &eventSink{}
+	e.SetNotifier(newSink.add, 5)
+
+	if err := e.Trigger("a"); err != nil {
+		t.Fatal(err)
+	}
+	runner.handle(0).finish(Result{ExitCode: 7})
+	waitFor(t, "failure event on new sink", func() bool {
+		return len(newSink.byType(EventFailure)) == 1
+	})
+	if len(oldSink.byType(EventFailure)) != 0 {
+		t.Error("event leaked to the replaced notifier")
+	}
+}
+
 // The streak fires exactly at the threshold, once, and re-arms after an
 // on-time fire.
 func TestOverrunStreakThresholdAndRearm(t *testing.T) {

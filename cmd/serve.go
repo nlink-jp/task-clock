@@ -79,10 +79,12 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 		return err
 	}
 
-	// Reload re-reads task definitions. Daemon-level settings (listen,
-	// api_key, data_dir) intentionally need a restart — swapping them live
-	// would tear down the very connection delivering the reload.
+	// Reload re-reads task definitions, [hooks], and retention_days.
+	// Only the structural daemon settings (listen, api_key, data_dir,
+	// tick_interval) need a restart — swapping the listener live would
+	// tear down the very connection delivering the reload.
 	var reloadMu sync.Mutex
+	retentionDays := cfg.Daemon.RetentionDays
 	reload := func() error {
 		reloadMu.Lock()
 		defer reloadMu.Unlock()
@@ -93,6 +95,9 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 		if err := eng.Configure(ncfg.Tasks); err != nil {
 			return err
 		}
+		eng.SetNotifier(makeHookNotifier(ncfg.Hooks, stdout, stderr),
+			ncfg.Hooks.OverrunStreakThreshold)
+		retentionDays = ncfg.Daemon.RetentionDays
 		fmt.Fprintf(stdout, "%s reloaded config: %d tasks\n", logTime(), len(ncfg.Tasks))
 		return nil
 	}
@@ -109,7 +114,10 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 		cfg.Daemon.TickInterval.Value(), cfg.Daemon.DataDir)
 
 	prune := func(now time.Time) {
-		cutoff := now.AddDate(0, 0, -cfg.Daemon.RetentionDays)
+		reloadMu.Lock()
+		days := retentionDays
+		reloadMu.Unlock()
+		cutoff := now.AddDate(0, 0, -days)
 		paths, err := st.Prune(cutoff)
 		if err != nil {
 			fmt.Fprintf(stderr, "%s prune failed: %v\n", logTime(), err)
@@ -119,7 +127,7 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 			os.Remove(p)
 		}
 		if len(paths) > 0 {
-			fmt.Fprintf(stdout, "%s pruned %d run logs older than %d days\n", logTime(), len(paths), cfg.Daemon.RetentionDays)
+			fmt.Fprintf(stdout, "%s pruned %d run logs older than %d days\n", logTime(), len(paths), days)
 		}
 	}
 	prune(time.Now())
