@@ -90,10 +90,30 @@ type Engine struct {
 
 type taskState struct {
 	cfg      config.TaskConfig
-	spec     schedule.Spec
-	nextFire time.Time
+	spec     schedule.Spec // zero for watermark tasks
+	nextFire time.Time     // cron tasks only
 	running  *runningRun
-	queued   *time.Time // scheduled_for of the one queued fire
+	queued   *time.Time // scheduled_for of the one queued fire (cron only)
+
+	// Watermark state: the trigger condition is "enough time elapsed since
+	// the last success (and since the last attempt, so a failing task
+	// retries at the same cadence instead of crash-looping)".
+	lastSuccess      time.Time // finish time of the last exit-0 run
+	lastAttemptStart time.Time // start time of the last run, any outcome
+}
+
+// watermarkDue returns when a watermark task is next due — a pure function
+// of the recorded history and the interval, so it stays queryable. Zero
+// means "never ran: due immediately".
+func (st *taskState) watermarkDue() time.Time {
+	base := st.lastSuccess
+	if st.lastAttemptStart.After(base) {
+		base = st.lastAttemptStart
+	}
+	if base.IsZero() {
+		return time.Time{}
+	}
+	return base.Add(st.cfg.Watermark.Value())
 }
 
 type runningRun struct {
@@ -132,12 +152,16 @@ func New(clk clock.Clock, st *store.Store, runner Runner, opts Options) *Engine 
 func (e *Engine) Configure(tasks []config.TaskConfig) error {
 	specs := make(map[string]schedule.Spec, len(tasks))
 	for _, t := range tasks {
+		if _, dup := specs[t.Name]; dup {
+			return fmt.Errorf("task %q: duplicate name", t.Name)
+		}
+		if t.IsWatermark() {
+			specs[t.Name] = schedule.Spec{}
+			continue
+		}
 		spec, err := schedule.Parse(t.Cron)
 		if err != nil {
 			return fmt.Errorf("task %q: %w", t.Name, err)
-		}
-		if _, dup := specs[t.Name]; dup {
-			return fmt.Errorf("task %q: duplicate name", t.Name)
 		}
 		specs[t.Name] = spec
 	}
@@ -152,11 +176,23 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 		if prev, ok := e.tasks[t.Name]; ok {
 			st.running = prev.running
 			st.queued = prev.queued
+			st.lastSuccess = prev.lastSuccess
+			st.lastAttemptStart = prev.lastAttemptStart
 			if prev.cfg.Cron == t.Cron {
 				st.nextFire = prev.nextFire
 			}
+		} else if t.IsWatermark() {
+			// A fresh watermark task recovers its state from the history,
+			// so a daemon restart does not reset the elapsed-since-success
+			// clock.
+			if run, err := e.store.LastSuccess(t.Name); err == nil && run != nil && run.FinishedAt != nil {
+				st.lastSuccess = *run.FinishedAt
+			}
+			if run, err := e.store.LastRun(t.Name); err == nil && run != nil && run.StartedAt != nil {
+				st.lastAttemptStart = *run.StartedAt
+			}
 		}
-		if st.nextFire.IsZero() && t.IsEnabled() {
+		if !t.IsWatermark() && st.nextFire.IsZero() && t.IsEnabled() {
 			st.nextFire = st.spec.Next(now)
 		}
 		next[t.Name] = st
@@ -188,7 +224,34 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		r.handle.Kill()
 	}
 
-	if !cfg.IsEnabled() || st.nextFire.IsZero() || now.Before(st.nextFire) {
+	if !cfg.IsEnabled() {
+		return
+	}
+
+	if cfg.IsWatermark() {
+		// A watermark re-evaluates only when idle: the current run will
+		// move the watermark itself, so there is nothing to queue or miss.
+		if st.running != nil {
+			return
+		}
+		due := st.watermarkDue()
+		if due.IsZero() {
+			// Never ran: the backlog is maximally stale — run now.
+			e.startRunLocked(st, now, store.OutcomeOnTime, now)
+			return
+		}
+		if now.Before(due) {
+			return
+		}
+		outcome := store.OutcomeOnTime
+		if now.Sub(due) > e.opts.OnTimeSlack {
+			outcome = store.OutcomeQueued // ran, but later than due
+		}
+		e.startRunLocked(st, due, outcome, now)
+		return
+	}
+
+	if st.nextFire.IsZero() || now.Before(st.nextFire) {
 		return
 	}
 
@@ -319,6 +382,7 @@ func (e *Engine) startRunLocked(st *taskState, scheduledFor time.Time, outcome s
 		startedAt:    now,
 		handle:       handle,
 	}
+	st.lastAttemptStart = now
 	go e.watch(cfg.Name, id, handle)
 }
 
@@ -349,6 +413,9 @@ func (e *Engine) finishRun(task string, id int64, res Result) {
 		return // task removed by reload, or a stale watcher
 	}
 	st.running = nil
+	if res.ExitCode == 0 && errMsg == "" {
+		st.lastSuccess = now
+	}
 	if st.queued != nil {
 		fire := *st.queued
 		st.queued = nil

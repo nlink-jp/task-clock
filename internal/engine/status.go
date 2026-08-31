@@ -7,8 +7,9 @@ import "time"
 // and "when it will actually run" diverge under overlap/catch-up (RFP §2).
 type NextExpected struct {
 	// Kind: "at" (a concrete time), "after_current" (immediately after the
-	// running task finishes — a state, not a predictable timestamp), or
-	// "none" (disabled).
+	// running task finishes — a state, not a predictable timestamp),
+	// "after_success" (a running watermark task: the next due time is
+	// recomputed from this run's outcome), or "none" (disabled).
 	Kind string     `json:"kind"`
 	At   *time.Time `json:"at,omitempty"`
 }
@@ -24,7 +25,8 @@ type RunningStatus struct {
 type TaskStatus struct {
 	Name            string         `json:"name"`
 	Enabled         bool           `json:"enabled"`
-	Cron            string         `json:"cron"`
+	Cron            string         `json:"cron,omitempty"`
+	Watermark       string         `json:"watermark,omitempty"`
 	Overlap         string         `json:"overlap"`
 	CatchUp         bool           `json:"catch_up"`
 	NextFire        *time.Time     `json:"next_fire,omitempty"`
@@ -53,6 +55,11 @@ func (e *Engine) Status() []TaskStatus {
 			Overlap: st.cfg.OverlapPolicy(),
 			CatchUp: st.cfg.CatchUpEnabled(),
 		}
+		if st.cfg.IsWatermark() {
+			ts.Watermark = st.cfg.Watermark.Value().String()
+			ts.Overlap = ""
+			ts.CatchUp = false
+		}
 		if r := st.running; r != nil {
 			ts.Running = &RunningStatus{
 				ScheduledFor:   r.scheduledFor,
@@ -62,6 +69,20 @@ func (e *Engine) Status() []TaskStatus {
 		}
 		if !ts.Enabled {
 			ts.NextExpectedRun = NextExpected{Kind: "none"}
+			out = append(out, ts)
+			continue
+		}
+		if st.cfg.IsWatermark() {
+			if st.running != nil {
+				ts.NextExpectedRun = NextExpected{Kind: "after_success"}
+			} else {
+				due := st.watermarkDue()
+				if due.IsZero() || due.Before(now) {
+					due = now // due immediately (next tick)
+				}
+				ts.NextFire = &due
+				ts.NextExpectedRun = NextExpected{Kind: "at", At: ts.NextFire}
+			}
 			out = append(out, ts)
 			continue
 		}

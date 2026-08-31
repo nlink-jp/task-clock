@@ -82,12 +82,23 @@ func renderNextRun(v api.TaskView) string {
 	switch v.NextExpectedRun.Kind {
 	case "after_current":
 		return "after current run"
+	case "after_success":
+		return "success + " + v.Watermark
 	case "at":
 		if v.NextExpectedRun.At != nil {
 			return fmtLocal(*v.NextExpectedRun.At)
 		}
 	}
 	return "-"
+}
+
+// renderTrigger shows what schedules the task: a cron expression or the
+// watermark interval.
+func renderTrigger(v api.TaskView) string {
+	if v.Watermark != "" {
+		return "success + " + v.Watermark
+	}
+	return v.Cron
 }
 
 func renderLastRun(v api.TaskView) string {
@@ -131,9 +142,13 @@ func runList(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	w := tabwriter.NewWriter(stdout, 2, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tENABLED\tCRON\tOVERLAP\tCATCH_UP")
+	fmt.Fprintln(w, "NAME\tENABLED\tTRIGGER\tOVERLAP\tCATCH_UP")
 	for _, v := range views {
-		fmt.Fprintf(w, "%s\t%t\t%s\t%s\t%t\n", v.Name, v.Enabled, v.Cron, v.Overlap, v.CatchUp)
+		overlap, catchUp := v.Overlap, strconv.FormatBool(v.CatchUp)
+		if v.Watermark != "" {
+			overlap, catchUp = "-", "-"
+		}
+		fmt.Fprintf(w, "%s\t%t\t%s\t%s\t%s\n", v.Name, v.Enabled, renderTrigger(v), overlap, catchUp)
 	}
 	return w.Flush()
 }

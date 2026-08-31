@@ -242,6 +242,58 @@ overlap = "sometimes"
 	}
 }
 
+func TestValidateWatermarkExclusivity(t *testing.T) {
+	dir := writeConfig(t, validDaemon, map[string]string{
+		"a.toml": `
+[[task]]
+name      = "ok-wm"
+watermark = "30m"
+command   = ["/bin/true"]
+
+[[task]]
+name      = "both"
+cron      = "* * * * *"
+watermark = "30m"
+command   = ["/bin/true"]
+
+[[task]]
+name    = "neither"
+command = ["/bin/true"]
+
+[[task]]
+name      = "wm-with-knobs"
+watermark = "30m"
+command   = ["/bin/true"]
+overlap   = "skip"
+catch_up  = false
+jitter    = "10s"
+`,
+	})
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := cfg.Validate(noEnv)
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	for _, want := range []string{
+		`"both": cron and watermark are mutually exclusive`,
+		`"neither": a trigger is required`,
+		"overlap has no effect on a watermark task",
+		"catch_up has no effect on a watermark task",
+		"jitter has no effect on a watermark task",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing finding %q in:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, `"ok-wm"`) {
+		t.Errorf("valid watermark task flagged:\n%s", joined)
+	}
+}
+
 func TestValidateAcceptsLocalhostForms(t *testing.T) {
 	for _, listen := range []string{"127.0.0.1:1", "localhost:17282", "[::1]:9"} {
 		if err := validateLoopbackListen(listen); err != nil {

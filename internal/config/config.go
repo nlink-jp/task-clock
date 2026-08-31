@@ -98,20 +98,30 @@ type DaemonConfig struct {
 }
 
 // TaskConfig is one [[task]] table from tasks.d/*.toml.
+//
+// Exactly one of Cron and Watermark defines the trigger. A watermark task
+// fires when the configured duration has elapsed since its last success
+// (RFP Phase 2): the trigger that keeps backlog-driven jobs self-healing —
+// however a fire was lost, the elapsed-since-success condition re-arms.
 type TaskConfig struct {
-	Name    string            `toml:"name"`
-	Cron    string            `toml:"cron"`
-	Command CommandValue      `toml:"command"`
-	Shell   bool              `toml:"shell"`
-	Workdir string            `toml:"workdir"`
-	Env     map[string]string `toml:"env"`
-	Timeout Duration          `toml:"timeout"`
-	Overlap string            `toml:"overlap"`
-	CatchUp *bool             `toml:"catch_up"`
-	Enabled *bool             `toml:"enabled"`
+	Name      string            `toml:"name"`
+	Cron      string            `toml:"cron"`
+	Watermark Duration          `toml:"watermark"`
+	Command   CommandValue      `toml:"command"`
+	Shell     bool              `toml:"shell"`
+	Workdir   string            `toml:"workdir"`
+	Env       map[string]string `toml:"env"`
+	Timeout   Duration          `toml:"timeout"`
+	Overlap   string            `toml:"overlap"`
+	CatchUp   *bool             `toml:"catch_up"`
+	Jitter    Duration          `toml:"jitter"`
+	Enabled   *bool             `toml:"enabled"`
 
 	Source string `toml:"-"` // file this task was defined in
 }
+
+// IsWatermark reports whether the task is watermark-triggered.
+func (t *TaskConfig) IsWatermark() bool { return t.Watermark > 0 }
 
 // OverlapPolicy returns the effective overlap policy (default queue-one).
 func (t *TaskConfig) OverlapPolicy() string {
@@ -303,10 +313,29 @@ func (c *Config) Validate(lookupEnv func(string) (string, bool)) []error {
 			seen[t.Name] = t.Source
 		}
 
-		if t.Cron == "" {
-			addf("%s: cron is required", where)
-		} else if _, err := schedule.Parse(t.Cron); err != nil {
-			addf("%s: %v", where, err)
+		switch {
+		case t.Cron == "" && !t.IsWatermark():
+			addf("%s: a trigger is required — set cron or watermark", where)
+		case t.Cron != "" && t.IsWatermark():
+			addf("%s: cron and watermark are mutually exclusive", where)
+		case t.Cron != "":
+			if _, err := schedule.Parse(t.Cron); err != nil {
+				addf("%s: %v", where, err)
+			}
+		}
+		if t.IsWatermark() {
+			// Overlap/catch-up/jitter describe how discrete cron fires
+			// collide; a watermark re-evaluates after every run, so these
+			// knobs would silently do nothing — reject them instead.
+			if t.Overlap != "" {
+				addf("%s: overlap has no effect on a watermark task", where)
+			}
+			if t.CatchUp != nil {
+				addf("%s: catch_up has no effect on a watermark task", where)
+			}
+			if t.Jitter > 0 {
+				addf("%s: jitter has no effect on a watermark task", where)
+			}
 		}
 
 		switch {
