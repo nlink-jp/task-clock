@@ -94,7 +94,9 @@ func (e *Engine) Status() []TaskStatus {
 			continue
 		}
 		if !st.nextFire.IsZero() {
-			nf := st.nextFire
+			// Display the jittered start, not the raw cron time — the
+			// status must show when the task will actually run.
+			nf := st.effectiveDue(st.nextFire)
 			ts.NextFire = &nf
 		}
 		if st.queued != nil {

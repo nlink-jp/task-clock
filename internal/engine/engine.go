@@ -9,8 +9,10 @@
 package engine
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
@@ -137,6 +139,23 @@ type taskState struct {
 	// are neither run nor recorded as missed, and the flag does not
 	// survive a daemon restart.
 	paused bool
+}
+
+// effectiveDue is when a cron fire actually starts: the fire time plus the
+// task's jitter offset. The offset is a hash of the task name and the fire
+// time — deterministic, so next_fire stays a queryable pure function while
+// different tasks sharing a cron expression spread out.
+func (st *taskState) effectiveDue(fire time.Time) time.Time {
+	j := st.cfg.Jitter.Value()
+	if j <= 0 {
+		return fire
+	}
+	h := fnv.New64a()
+	h.Write([]byte(st.cfg.Name))
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(fire.Unix()))
+	h.Write(buf[:])
+	return fire.Add(time.Duration(h.Sum64() % uint64(j)))
 }
 
 // watermarkDue returns when a watermark task is next due — a pure function
@@ -293,7 +312,7 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		return
 	}
 
-	if st.nextFire.IsZero() || now.Before(st.nextFire) {
+	if st.nextFire.IsZero() || now.Before(st.effectiveDue(st.nextFire)) {
 		return
 	}
 
@@ -323,7 +342,7 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 // handleFire applies the overlap / catch-up policies to one due fire.
 func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 	cfg := &st.cfg
-	late := now.Sub(fire) > e.opts.OnTimeSlack
+	late := now.Sub(st.effectiveDue(fire)) > e.opts.OnTimeSlack
 
 	if st.running == nil {
 		if late && !cfg.CatchUpEnabled() {
