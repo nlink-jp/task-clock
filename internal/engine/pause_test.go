@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/nlink-jp/task-clock/internal/config"
+	"github.com/nlink-jp/task-clock/internal/store"
 )
 
 // A paused task neither runs nor records missed rows — the silence is
@@ -94,6 +95,53 @@ func TestPauseSurvivesReconfigureAndAllowsTrigger(t *testing.T) {
 	}
 	if runner.count() != 1 {
 		t.Fatal("trigger did not start")
+	}
+}
+
+// Pause is the operational off switch: it must survive a daemon restart
+// via the store, and resume must clear it just as durably.
+func TestPauseSurvivesRestart(t *testing.T) {
+	st, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	start := at(t, "2026-08-31T10:00:00Z")
+
+	newEngine := func() (*Engine, *fakeRunner) {
+		clk := &fakeClock{t: start}
+		runner := &fakeRunner{}
+		e := New(clk, st, runner, Options{
+			LookupEnv: func(string) (string, bool) { return "", false },
+			BaseEnv:   func() []string { return nil },
+		})
+		if err := e.Configure([]config.TaskConfig{task("a", "* * * * *")}); err != nil {
+			t.Fatal(err)
+		}
+		return e, runner
+	}
+
+	e1, _ := newEngine()
+	if err := e1.Pause("a"); err != nil {
+		t.Fatal(err)
+	}
+
+	// "Restart": a fresh engine over the same store.
+	e2, runner2 := newEngine()
+	if !e2.Status()[0].Paused {
+		t.Fatal("pause lost across restart")
+	}
+	e2.Tick(at(t, "2026-08-31T12:00:00Z"))
+	if runner2.count() != 0 {
+		t.Fatal("paused task fired after restart")
+	}
+
+	if err := e2.Resume("a"); err != nil {
+		t.Fatal(err)
+	}
+	e3, _ := newEngine()
+	if e3.Status()[0].Paused {
+		t.Fatal("resume not persisted")
 	}
 }
 

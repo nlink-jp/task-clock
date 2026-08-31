@@ -78,7 +78,7 @@ Commands:
   list         show task definitions
   history      show scheduled-vs-actual run history for a task
   trigger      trigger a task manually
-  pause        suspend a task's scheduling (until resume or daemon restart)
+  pause        suspend a task's scheduling until resume (survives restarts)
   resume       lift a pause (cron restarts from the next future fire)
   reload       reload config and tasks.d
   validate     validate config and preview each task's next fire

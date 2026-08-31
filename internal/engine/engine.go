@@ -228,6 +228,9 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	now := e.clock.Now()
+	// Pause persists across restarts (the operational off switch); a task
+	// this process has not seen yet recovers its paused state here.
+	persistedPaused, _ := e.store.PausedTasks()
 	next := make(map[string]*taskState, len(tasks))
 	order := make([]string, 0, len(tasks))
 	for _, t := range tasks {
@@ -241,15 +244,18 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 			if prev.cfg.Cron == t.Cron {
 				st.nextFire = prev.nextFire
 			}
-		} else if t.IsWatermark() {
-			// A fresh watermark task recovers its state from the history,
-			// so a daemon restart does not reset the elapsed-since-success
-			// clock.
-			if run, err := e.store.LastSuccess(t.Name); err == nil && run != nil && run.FinishedAt != nil {
-				st.lastSuccess = *run.FinishedAt
-			}
-			if run, err := e.store.LastRun(t.Name); err == nil && run != nil && run.StartedAt != nil {
-				st.lastAttemptStart = *run.StartedAt
+		} else {
+			st.paused = persistedPaused[t.Name]
+			if t.IsWatermark() {
+				// A fresh watermark task recovers its state from the
+				// history, so a daemon restart does not reset the
+				// elapsed-since-success clock.
+				if run, err := e.store.LastSuccess(t.Name); err == nil && run != nil && run.FinishedAt != nil {
+					st.lastSuccess = *run.FinishedAt
+				}
+				if run, err := e.store.LastRun(t.Name); err == nil && run != nil && run.StartedAt != nil {
+					st.lastAttemptStart = *run.StartedAt
+				}
 			}
 		}
 		if !t.IsWatermark() && st.nextFire.IsZero() && t.IsEnabled() {
@@ -542,8 +548,10 @@ func (e *Engine) Trigger(name string) error {
 	return nil
 }
 
-// Pause suspends a task's scheduling (runtime-only; cleared on restart).
-// Fires during a pause are intentionally neither run nor recorded.
+// Pause suspends a task's scheduling until Resume — persisted, so it
+// survives daemon restarts (the operational per-task off switch, distinct
+// from the config's declarative `enabled`). Fires during a pause are
+// intentionally neither run nor recorded.
 func (e *Engine) Pause(name string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -552,6 +560,7 @@ func (e *Engine) Pause(name string) error {
 		return fmt.Errorf("%w: %s", ErrUnknownTask, name)
 	}
 	st.paused = true
+	e.store.SetPaused(name, true)
 	return nil
 }
 
@@ -570,6 +579,7 @@ func (e *Engine) Resume(name string) error {
 		st.nextFire = st.spec.Next(e.clock.Now())
 	}
 	st.paused = false
+	e.store.SetPaused(name, false)
 	return nil
 }
 

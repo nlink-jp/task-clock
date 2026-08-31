@@ -127,7 +127,7 @@ task-clock status                 # per-task state, next fire, overrun
 task-clock list                   # task definitions as the daemon sees them
 task-clock history analyze        # scheduled-vs-actual record (+ log paths)
 task-clock trigger analyze        # fire a task now
-task-clock pause analyze          # suspend scheduling (until resume/restart)
+task-clock pause analyze          # suspend scheduling until resume (survives restarts)
 task-clock resume analyze         # lift the pause (no backlog dump)
 task-clock reload                 # re-read tasks.d (also: SIGHUP)
 task-clock validate               # config check + next-fire preview

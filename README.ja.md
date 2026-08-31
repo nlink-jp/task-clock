@@ -126,7 +126,7 @@ task-clock status                 # タスク状態・次回発火・超過
 task-clock list                   # デーモンが見ているタスク定義
 task-clock history analyze        # 予定 vs 実績の履歴（ログパス付き）
 task-clock trigger analyze        # 今すぐ発火
-task-clock pause analyze          # スケジュール停止（resume か再起動まで）
+task-clock pause analyze          # スケジュール停止（resume まで; 再起動を跨いで持続）
 task-clock resume analyze         # 再開（停止中の発火はバックログ投入しない）
 task-clock reload                 # tasks.d 再読込（SIGHUP でも可）
 task-clock validate               # 設定検証 + 次回発火プレビュー

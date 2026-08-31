@@ -64,6 +64,9 @@ CREATE TABLE IF NOT EXISTS runs (
 	error         TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task, id);
+CREATE TABLE IF NOT EXISTS paused_tasks (
+	task TEXT PRIMARY KEY
+);
 `
 
 // Open opens (creating if needed) the database under dataDir.
@@ -188,6 +191,36 @@ func (s *Store) LastSuccess(task string) (*Run, error) {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// SetPaused persists a task's paused state. Pause is the operational
+// per-task off switch (GUI/API); it survives daemon restarts, while the
+// config's `enabled` stays the declarative baseline in tasks.d.
+func (s *Store) SetPaused(task string, paused bool) error {
+	if paused {
+		_, err := s.db.Exec(`INSERT OR IGNORE INTO paused_tasks (task) VALUES (?)`, task)
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM paused_tasks WHERE task = ?`, task)
+	return err
+}
+
+// PausedTasks returns the set of persistently paused task names.
+func (s *Store) PausedTasks() (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT task FROM paused_tasks`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	set := map[string]bool{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		set[t] = true
+	}
+	return set, rows.Err()
 }
 
 // Prune deletes history rows older than cutoff and returns the log paths of

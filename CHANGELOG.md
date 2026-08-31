@@ -3,6 +3,15 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- pause now persists across daemon restarts (stored alongside the run
+  history): it is the operational per-task off switch, layered under the
+  config's declarative `enabled` — added so GUI clients can offer a durable
+  enable/disable control without editing the user's tasks.d files
+
 ## [0.1.0] - 2026-08-31
 
 ### Added

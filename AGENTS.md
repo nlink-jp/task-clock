@@ -79,8 +79,9 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
 - **通知イベント**は engine が emit するだけ（Options.Notify、goroutine
   dispatch）。coalesced は通知しない。streak は閾値ちょうどで 1 回だけ発火し
   on_time で再武装。hook 実行は cmd/hooks.go（60s timeout、キー非ログ）。
-- **pause は runtime-only**（再起動で解除、reload は生存）。pause 中の発火は
-  記録もしない（意図的沈黙）。resume は cron を未来の次発火から再開
-  （バックログ投入しない）。手動 trigger は pause 中も許可。
+- **pause は永続**（SQLite の paused_tasks; 再起動・reload とも生存、resume で
+  解除）— 「デーモン所有の運用上の OFF スイッチ」で、config の宣言的 `enabled`
+  とは別層。pause 中の発火は記録もしない（意図的沈黙）。resume は cron を
+  未来の次発火から再開（バックログ投入しない）。手動 trigger は pause 中も許可。
 - テスト実行は `go test | tail` のようなパイプ禁止（失敗を飲む）。
   `set -o pipefail` するか素で実行。
