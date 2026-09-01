@@ -131,9 +131,12 @@ func TestStartEnablesThenBootstraps(t *testing.T) {
 
 var errNotLoaded = os.ErrNotExist
 
-// A start against an already-loaded daemon must not double-bootstrap.
+// A start against a STABLY loaded daemon must not double-bootstrap.
 func TestStartWhenAlreadyLoaded(t *testing.T) {
 	installFakePlist(t)
+	prev := startSettlePoll
+	startSettlePoll = 0
+	t.Cleanup(func() { startSettlePoll = prev })
 	calls := interceptLaunchctl(t, func([]string) error { return nil })
 	var out strings.Builder
 	if err := runStart(&out); err != nil {
@@ -149,12 +152,46 @@ func TestStartWhenAlreadyLoaded(t *testing.T) {
 	}
 }
 
+// A quick stop→start can catch the old daemon still tearing down: the
+// service is loaded on the first look but then vanishes. start must see
+// through it and bootstrap — otherwise the daemon stays down with the
+// switch ON.
+func TestStartSeesThroughATearingDownService(t *testing.T) {
+	installFakePlist(t)
+	prev := startSettlePoll
+	startSettlePoll = 0
+	t.Cleanup(func() { startSettlePoll = prev })
+	prints := 0
+	calls := interceptLaunchctl(t, func(args []string) error {
+		if args[0] == "print" {
+			prints++
+			if prints == 1 {
+				return nil // still loaded: the old daemon is mid-teardown
+			}
+			return errNotLoaded // gone now
+		}
+		return nil
+	})
+	var out strings.Builder
+	if err := runStart(&out); err != nil {
+		t.Fatal(err)
+	}
+	last := (*calls)[len(*calls)-1]
+	if !strings.HasPrefix(last, "bootstrap gui/") {
+		t.Fatalf("teardown not followed by bootstrap: %v", *calls)
+	}
+}
+
 // stop = disable (survive logins: RunAtLoad would otherwise revive a
-// deliberately stopped daemon) + bootout, in that order, and idempotent —
-// stopping a stopped daemon reports success.
+// deliberately stopped daemon) + bootout, in that order. A failed bootout
+// is tolerated (stopping a stopped daemon is fine) — but a failed disable
+// is an error, because then "stopped" would not be durable.
 func TestStopDisablesThenBootsOutAndIsIdempotent(t *testing.T) {
-	calls := interceptLaunchctl(t, func([]string) error {
-		return os.ErrNotExist // launchd: nothing loaded — must be tolerated
+	calls := interceptLaunchctl(t, func(args []string) error {
+		if args[0] == "bootout" {
+			return os.ErrNotExist // nothing loaded — must be tolerated
+		}
+		return nil
 	})
 	if err := runStop(io.Discard); err != nil {
 		t.Fatal(err)
@@ -164,6 +201,45 @@ func TestStopDisablesThenBootsOutAndIsIdempotent(t *testing.T) {
 		!strings.HasPrefix(got[0], "disable gui/") ||
 		!strings.HasPrefix(got[1], "bootout gui/") {
 		t.Fatalf("call sequence = %v", got)
+	}
+}
+
+func TestStopFailsWhenDisableFails(t *testing.T) {
+	interceptLaunchctl(t, func(args []string) error {
+		if args[0] == "disable" {
+			return os.ErrPermission
+		}
+		return nil
+	})
+	if err := runStop(io.Discard); err == nil {
+		t.Fatal("a failed disable must fail the stop — it would not be durable")
+	}
+}
+
+// A failed binary copy must leave NO registered plist pointing at a
+// nonexistent binary (launchd would silently fail to spawn it forever).
+func TestInstallCopyFailureWritesNoPlist(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	interceptLaunchctl(t, func([]string) error { return nil })
+	// Default data_dir under the fake HOME; a FILE where the bin dir
+	// should go makes the copy fail.
+	dataDir := filepath.Join(os.Getenv("HOME"), "Library", "Application Support", "task-clock")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataDir, "bin"), []byte("in the way"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInstall(io.Discard); err == nil {
+		t.Fatal("install must fail when the binary cannot be copied")
+	}
+	plist, err := plistPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(plist); err == nil {
+		t.Fatal("plist written despite the copy failure — it points at nothing")
 	}
 }
 

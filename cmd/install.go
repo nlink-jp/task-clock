@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/nlink-jp/task-clock/internal/config"
 )
@@ -106,9 +107,6 @@ func runInstall(stdout io.Writer) error {
 	}
 	stderrPath := filepath.Join(dataDir, "daemon.err")
 	daemonBin, needsCopy := daemonBinaryPath(execPath, dataDir)
-	if err := os.WriteFile(path, []byte(GeneratePlist(daemonBin, stderrPath)), 0o644); err != nil {
-		return err
-	}
 
 	// Boot out first: a previous registration blocks bootstrap (the error
 	// is expected when nothing is registered) — and stopping the daemon
@@ -116,10 +114,16 @@ func runInstall(stdout io.Writer) error {
 	// on signature change.
 	launchctl("bootout", launchdService())
 
+	// The plist is written only AFTER the binary it points at exists: a
+	// copy failure must not leave a registered plist aimed at nothing
+	// (launchd would silently fail to spawn it at every login).
 	if needsCopy {
 		if err := copyExecutable(execPath, daemonBin); err != nil {
 			return fmt.Errorf("installing daemon binary to %s: %w", daemonBin, err)
 		}
+	}
+	if err := os.WriteFile(path, []byte(GeneratePlist(daemonBin, stderrPath)), 0o644); err != nil {
+		return err
 	}
 
 	// A prior `task-clock stop` leaves a persistent disable record that
@@ -131,6 +135,10 @@ func runInstall(stdout io.Writer) error {
 	fmt.Fprintf(stdout, "installed: %s (label %s, binary %s)\n", path, launchdLabel, daemonBin)
 	return nil
 }
+
+// startSettlePoll paces the loaded-service re-checks in runStart; a test
+// hook (0 in tests).
+var startSettlePoll = 500 * time.Millisecond
 
 // runStart resumes a stopped daemon. Distinct from install (setup: write
 // plist, copy binary): start only flips the run state of an existing
@@ -145,11 +153,24 @@ func runStart(stdout io.Writer) error {
 		return fmt.Errorf("daemon is not installed — run `task-clock install` first")
 	}
 	launchctl("enable", launchdService())
-	// Already loaded (print succeeds) means launchd owns it right now —
-	// KeepAlive keeps it running; a second bootstrap would only error.
+	// A loaded service (print succeeds) usually means launchd owns it and
+	// KeepAlive keeps it running — but a stop's teardown is asynchronous,
+	// so a quick stop→start can catch the OLD daemon still unloading.
+	// Poll briefly: if the service vanishes, it was tearing down and we
+	// bootstrap; only a service that STAYS loaded is "already running".
 	if _, err := launchctl("print", launchdService()); err == nil {
-		fmt.Fprintln(stdout, "already running")
-		return nil
+		stillLoaded := true
+		for i := 0; i < 6; i++ {
+			time.Sleep(startSettlePoll)
+			if _, err := launchctl("print", launchdService()); err != nil {
+				stillLoaded = false
+				break
+			}
+		}
+		if stillLoaded {
+			fmt.Fprintln(stdout, "already running")
+			return nil
+		}
 	}
 	if out, err := launchctl("bootstrap", launchdDomain(), path); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
@@ -164,7 +185,12 @@ func runStart(stdout io.Writer) error {
 // user deliberately turned off. Both calls are best-effort so stop is
 // idempotent (stopping a stopped daemon is not an error).
 func runStop(stdout io.Writer) error {
-	launchctl("disable", launchdService())
+	// The disable is the stop's durability — if it fails, "stopped" would
+	// be a lie (RunAtLoad revives the daemon at the next login).
+	if out, err := launchctl("disable", launchdService()); err != nil {
+		return fmt.Errorf("launchctl disable: %v: %s", err, out)
+	}
+	// bootout is best-effort: stopping a stopped daemon is not an error.
 	launchctl("bootout", launchdService())
 	fmt.Fprintf(stdout, "stopped: %s (running tasks keep running; `task-clock start` to resume)\n", launchdLabel)
 	return nil
