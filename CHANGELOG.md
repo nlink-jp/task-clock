@@ -5,6 +5,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 
 ## [Unreleased]
 
+### Added
+
+- `start` / `stop` subcommands: the run state, separate from
+  `install`/`uninstall` (setup). `stop` disables the service so the stop
+  survives logins, and — like any daemon stop — never kills running
+  tasks; `start` (and `install`) clears the disable record. Added so the
+  GUI's power switch can flip the run state without uninstalling
+  (user feedback: one switch for both meant "pausing the fridge by
+  unplugging it")
+
 ### Changed
 
 - **A stopping daemon no longer kills running tasks** (field incident:

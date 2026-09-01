@@ -171,6 +171,8 @@ design; the streak hook re-arms after an on-time fire.
 | `validate` | check the config and preview each task's next fire — needs no daemon |
 | `install` | write the launch agent plist and start the daemon, now and at every login |
 | `uninstall` | stop the daemon and remove the launch agent |
+| `start` | start the installed daemon (clears a previous `stop`) |
+| `stop` | stop the daemon — running tasks are never killed, and the stop survives logins |
 | `version` | print the version (`--version` works too) |
 
 Flags — note they go **before** positional arguments
@@ -236,6 +238,10 @@ A queued fire that cannot survive the stop is recorded as
 `install` copies the binary to `data_dir/bin/task-clock` and points the
 launch agent there — a home nothing else owns, so quitting the GUI app,
 upgrading via Homebrew, or rebuilding never takes the daemon down with it.
+Setup and run state are separate layers: `install`/`uninstall` manage the
+registration, `start`/`stop` flip whether the daemon runs. A `stop` is
+durable (it survives logins — RunAtLoad will not silently revive a daemon
+you turned off) and, like any daemon stop, leaves running tasks alive.
 
 ## Building
 

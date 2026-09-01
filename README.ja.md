@@ -170,6 +170,8 @@ hook には `TASK_CLOCK_EVENT` / `TASK_CLOCK_TASK` / `TASK_CLOCK_SCHEDULED_FOR` 
 | `validate` | 設定検証 + タスクごとの次回発火プレビュー — デーモン不要 |
 | `install` | launch agent plist を書いてデーモンを起動（今すぐ + 以後のログイン時） |
 | `uninstall` | デーモンを停止し launch agent を削除 |
+| `start` | インストール済みデーモンを起動（以前の `stop` を解除） |
+| `stop` | デーモンを停止 — 実行中タスクは殺さず、停止はログインを跨いで持続 |
 | `version` | バージョン表示（`--version` でも可） |
 
 フラグは**位置引数より前**に置きます
@@ -231,6 +233,10 @@ group で走り続け、再起動したデーモンが生存と同一性を確�
 `install` はバイナリを `data_dir/bin/task-clock` にコピーし、launch agent を
 そこへ向けます — 他の何のライフサイクルにも属さない置き場所なので、GUI
 アプリの終了・Homebrew での更新・再ビルドでデーモンが巻き添えになりません。
+セットアップと動作状態は別レイヤーです: 登録は `install`/`uninstall`、
+動かすかどうかは `start`/`stop`。`stop` は永続的で（ログインを跨いで持続 —
+自分で止めたデーモンを RunAtLoad が勝手に蘇らせません）、他の停止と同様に
+実行中タスクは生き続けます。
 
 ## ビルド
 

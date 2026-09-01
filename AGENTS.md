@@ -83,8 +83,13 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
 - **install はバイナリを data_dir/bin/task-clock へ自己コピー**して plist を
   そこに向ける。.app 内部 (アプリ終了/cask upgrade で死ぬ — 事故の根本原因)・
   brew Cellar (upgrade で消える)・dist/ (再署名で殺される) を plist に
-  書いてはならない。順序は bootout → copy → bootstrap (実行中バイナリ
-  差し替えの罠回避)。
+  書いてはならない。順序は bootout → copy → enable → bootstrap (実行中
+  バイナリ差し替えの罠回避 + stop の disable 記録解除)。
+- **start/stop は動作状態、install/uninstall はセットアップ** — 別レイヤー。
+  stop = `launchctl disable` + `bootout` (disable が無いと RunAtLoad が次回
+  ログインで勝手に蘇らせる)。start = `enable` + `bootstrap` (disable された
+  サービスの bootstrap は launchd が拒否するため enable が先)。launchctl
+  呼び出しは `launchctl` 変数フック経由 — テストが呼び出し順をピンしている。
 - **デーモン自身のログは data_dir/daemon.log**（internal/logrotate、
   10MB×3 世代）。launchd 配下では stdout が消えるため serve が tee する。
   クラッシュトレースは plist の StandardErrorPath → daemon.err。
