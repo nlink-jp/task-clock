@@ -219,6 +219,19 @@ daemon.err             # launchd が捕捉するクラッシュトレース
 タスクは実行されません（仕様）。スリープ中に逃した発火は復帰時に 1 回だけ
 実行され（`catch_up`）、スキップ分は `missed(coalesced)` として記録されます。
 
+**デーモンの停止は実行中タスクを殺しません。** タスクは自前の process
+group で走り続け、再起動したデーモンが生存と同一性を確認して引き取り
+（`running (unmanaged)` 表示）、overlap ポリシーも維持し続けるため、再起動を
+またいで二重実行にはなりません。唯一の制約は、引き取った run の exit code が
+取得できないこと（もはやデーモンの子プロセスではないため）— 履歴上は
+「ended (exit status unknown)」で閉じます。kill が起きるのは明示的に設定した
+箇所のみです: `timeout`・`log_max_mb`・overlap の `kill-and-restart`。
+停止をまたげない queue 済み発火は `missed(daemon_stop)` として記録されます。
+
+`install` はバイナリを `data_dir/bin/task-clock` にコピーし、launch agent を
+そこへ向けます — 他の何のライフサイクルにも属さない置き場所なので、GUI
+アプリの終了・Homebrew での更新・再ビルドでデーモンが巻き添えになりません。
+
 ## ビルド
 
 ```bash

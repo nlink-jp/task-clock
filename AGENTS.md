@@ -74,6 +74,17 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
 - 実行プロセスは自前の process group で起動（Setpgid）し、kill は
   `-pgid` へ SIGTERM → 5s 後 SIGKILL。stdout+stderr は run ごとの
   ログファイルへ統合保存。
+- **デーモン停止は実行中タスクを殺さない**（実地事故 2026-09-02 起点）。
+  ReleaseAll が run 行を開いたまま released_runs 台帳 (pid/argv0/時刻) に
+  記録し、次のデーモンが Configure で生存+同一性 (ps 照合) を確認して
+  adopt する。adopted run にも timeout/log_max_mb/kill-and-restart は
+  pgid signal 経由で効く。死亡は Tick の生存確認で検知し「exit 不明」で
+  クローズ。**KillAll は存在しない — 復活させないこと。**
+- **install はバイナリを data_dir/bin/task-clock へ自己コピー**して plist を
+  そこに向ける。.app 内部 (アプリ終了/cask upgrade で死ぬ — 事故の根本原因)・
+  brew Cellar (upgrade で消える)・dist/ (再署名で殺される) を plist に
+  書いてはならない。順序は bootout → copy → bootstrap (実行中バイナリ
+  差し替えの罠回避)。
 - **デーモン自身のログは data_dir/daemon.log**（internal/logrotate、
   10MB×3 世代）。launchd 配下では stdout が消えるため serve が tee する。
   クラッシュトレースは plist の StandardErrorPath → daemon.err。

@@ -3,6 +3,22 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **A stopping daemon no longer kills running tasks** (field incident:
+  an in-flight task was killed on daemon stop and work was lost). Runs
+  are released alive, recorded in a ledger, and re-adopted by the next
+  daemon (liveness + identity checked) so overlap policies hold across
+  restarts — no double-runs, no lost work. Adopted runs show as
+  `running (unmanaged)`; their exit status is unknowable. A queued fire
+  that cannot survive the stop is recorded as `missed(daemon_stop)`
+- `install` now copies the binary to `data_dir/bin/task-clock` and points
+  the launch agent there — never at an .app bundle interior (which dies
+  with the app: the same incident's root cause when installed from the
+  GUI), a Homebrew Cellar path, or a dev build
+
 ## [0.3.0] - 2026-09-01
 
 ### Changed
