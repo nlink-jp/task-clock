@@ -225,15 +225,17 @@ once at wake (`catch_up`), and the skipped ones are recorded as
 `missed(coalesced)`.
 
 **A stopping daemon never kills running tasks.** They keep executing in
-their own process groups; a restarting daemon adopts them (liveness and
-identity checked), shows them as `running (unmanaged)`, and keeps holding
-the overlap policy against them, so a task cannot double-run across a
-restart. The one limitation: an adopted run's exit status is unknowable
-(it is no longer the daemon's child), so its history row closes as
-"ended (exit status unknown)". Kills happen only where you configured
-them: `timeout`, `log_max_mb`, and the `kill-and-restart` overlap policy.
-A queued fire that cannot survive the stop is recorded as
-`missed(daemon_stop)`.
+their own process groups; the next daemon adopts them — after a graceful
+stop or a crash alike (every spawn is registered, with the process start
+time as identity, so a reused pid is never mistaken for the run) — shows
+them as `running (unmanaged)`, and keeps holding the overlap policy
+against them, so a task cannot double-run across a restart. The one
+limitation: an adopted run's exit status is unknowable (it is no longer
+the daemon's child), so its history row closes as "ended (exit status
+unknown)" with no exit code. Kills happen only where you configured
+them: `timeout`, `log_max_mb`, and the `kill-and-restart` overlap policy
+— adopted runs included. A queued fire that cannot survive the stop is
+recorded as `missed(daemon_stop)`.
 
 `install` copies the binary to `data_dir/bin/task-clock` and points the
 launch agent there — a home nothing else owns, so quitting the GUI app,

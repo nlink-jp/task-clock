@@ -75,11 +75,16 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
   `-pgid` へ SIGTERM → 5s 後 SIGKILL。stdout+stderr は run ごとの
   ログファイルへ統合保存。
 - **デーモン停止は実行中タスクを殺さない**（実地事故 2026-09-02 起点）。
-  ReleaseAll が run 行を開いたまま released_runs 台帳 (pid/argv0/時刻) に
-  記録し、次のデーモンが Configure で生存+同一性 (ps 照合) を確認して
-  adopt する。adopted run にも timeout/log_max_mb/kill-and-restart は
-  pgid signal 経由で効く。死亡は Tick の生存確認で検知し「exit 不明」で
-  クローズ。**KillAll は存在しない — 復活させないこと。**
+  **live_runs レジストリは spawn 時に書く**（停止時ではない — クラッシュ
+  でも adopt 可能にするため; KeepAlive は落ちたデーモンを数秒で再起動する）。
+  同一性は **プロセス開始時刻 (ps lstart)** — argv0 照合は run 内の exec で
+  偽陰性→二重実行、pid 再利用で偽陽性→無関係プロセス kill になるため禁止。
+  同一性はシグナル送信前にも毎回再検証。adopted run の kill は
+  TERM→killGrace→KILL のエスカレーション（TERM 無視で busy 永久化を防ぐ）。
+  「exit 不明」クローズは FinishRunUnknownExit（exit_code は NULL — 不明は
+  失敗ではない; GUI の失敗バナー条件が依存）。store.FinishRun は
+  finished_at IS NULL ガード付き — 実 exit を後段の finalize が上書き
+  できない。**KillAll は存在しない — 復活させないこと。**
 - **install はバイナリを data_dir/bin/task-clock へ自己コピー**して plist を
   そこに向ける。.app 内部 (アプリ終了/cask upgrade で死ぬ — 事故の根本原因)・
   brew Cellar (upgrade で消える)・dist/ (再署名で殺される) を plist に
@@ -87,9 +92,13 @@ internal/api/        # localhost HTTP API (Bearer 認証・定数時間比較)
   バイナリ差し替えの罠回避 + stop の disable 記録解除)。
 - **start/stop は動作状態、install/uninstall はセットアップ** — 別レイヤー。
   stop = `launchctl disable` + `bootout` (disable が無いと RunAtLoad が次回
-  ログインで勝手に蘇らせる)。start = `enable` + `bootstrap` (disable された
-  サービスの bootstrap は launchd が拒否するため enable が先)。launchctl
-  呼び出しは `launchctl` 変数フック経由 — テストが呼び出し順をピンしている。
+  ログインで勝手に蘇らせる; disable 失敗は stop のエラー)。start = `enable` +
+  `bootstrap` (disable されたサービスの bootstrap は launchd が拒否するため
+  enable が先)。start は「loaded に見えるが teardown 中」を settle ポーリング
+  で見抜いてから bootstrap する（stop→start 連打対策）。install は
+  bootout → copy → **plist 書き込み** → enable → bootstrap の順 — copy 失敗
+  時に実体のないバイナリを指す plist を残さない。launchctl 呼び出しは
+  `launchctl` 変数フック経由 — テストが呼び出し順をピンしている。
 - **デーモン自身のログは data_dir/daemon.log**（internal/logrotate、
   10MB×3 世代）。launchd 配下では stdout が消えるため serve が tee する。
   クラッシュトレースは plist の StandardErrorPath → daemon.err。

@@ -18,12 +18,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 ### Changed
 
 - **A stopping daemon no longer kills running tasks** (field incident:
-  an in-flight task was killed on daemon stop and work was lost). Runs
-  are released alive, recorded in a ledger, and re-adopted by the next
-  daemon (liveness + identity checked) so overlap policies hold across
-  restarts — no double-runs, no lost work. Adopted runs show as
-  `running (unmanaged)`; their exit status is unknowable. A queued fire
-  that cannot survive the stop is recorded as `missed(daemon_stop)`
+  an in-flight task was killed on daemon stop and work was lost). Every
+  spawn is recorded in a live-run registry (pid + process start time),
+  so the next daemon re-adopts still-running processes after ANY end —
+  graceful stop or crash — and overlap policies hold across restarts:
+  no double-runs, no lost work. Identity is the kernel-recorded process
+  start time (survives an in-run `exec`; a reused pid can never be
+  adopted or signalled), re-checked before every signal. Adopted runs
+  show as `running (unmanaged)`; their exit status is unknowable and
+  stays NULL (unknown is not a failure). `timeout` / `log_max_mb` /
+  `kill-and-restart` still apply to adopted runs, with the same
+  SIGTERM-then-SIGKILL escalation owned runs get. A queued fire that
+  cannot survive the stop is recorded as `missed(daemon_stop)`
 - `install` now copies the binary to `data_dir/bin/task-clock` and points
   the launch agent there — never at an .app bundle interior (which dies
   with the app: the same incident's root cause when installed from the

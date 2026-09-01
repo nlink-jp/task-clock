@@ -222,12 +222,15 @@ daemon.err             # launchd が捕捉するクラッシュトレース
 実行され（`catch_up`）、スキップ分は `missed(coalesced)` として記録されます。
 
 **デーモンの停止は実行中タスクを殺しません。** タスクは自前の process
-group で走り続け、再起動したデーモンが生存と同一性を確認して引き取り
-（`running (unmanaged)` 表示）、overlap ポリシーも維持し続けるため、再起動を
-またいで二重実行にはなりません。唯一の制約は、引き取った run の exit code が
-取得できないこと（もはやデーモンの子プロセスではないため）— 履歴上は
-「ended (exit status unknown)」で閉じます。kill が起きるのは明示的に設定した
-箇所のみです: `timeout`・`log_max_mb`・overlap の `kill-and-restart`。
+group で走り続け、次のデーモンが引き取ります — 正常停止でもクラッシュでも
+同様です（すべての spawn がプロセス開始時刻を同一性として登録されるため、
+再利用された pid を run と取り違えることはありません）。引き取った run は
+`running (unmanaged)` と表示され、overlap ポリシーも維持され続けるため、
+再起動をまたいで二重実行にはなりません。唯一の制約は、引き取った run の
+exit code が取得できないこと（もはやデーモンの子プロセスではないため）—
+履歴上は「ended (exit status unknown)」として exit code なしで閉じます。
+kill が起きるのは明示的に設定した箇所のみです: `timeout`・`log_max_mb`・
+overlap の `kill-and-restart` — 引き取った run にも同様に効きます。
 停止をまたげない queue 済み発火は `missed(daemon_stop)` として記録されます。
 
 `install` はバイナリを `data_dir/bin/task-clock` にコピーし、launch agent を
