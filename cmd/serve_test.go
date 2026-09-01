@@ -232,7 +232,7 @@ func TestShutdownReleasesRunningTasks(t *testing.T) {
 [[task]]
 name    = "long-task"
 cron    = "0 0 1 1 *"
-command = ["/bin/sleep", "30"]
+command = ["/bin/sleep", "3737"]
 `
 	if err := os.WriteFile(filepath.Join(dir, "tasks.d", "long.toml"), []byte(long), 0o600); err != nil {
 		t.Fatal(err)
@@ -278,15 +278,15 @@ command = ["/bin/sleep", "30"]
 	if run.FinishedAt != nil {
 		t.Fatalf("released run must stay open for adoption: %+v", run)
 	}
-	ledger, err := st.ReleasedRuns()
+	ledger, err := st.LiveRuns()
 	if err != nil || len(ledger) != 1 || ledger[0].Task != "long-task" {
-		t.Fatalf("released ledger = %+v (%v)", ledger, err)
+		t.Fatalf("live-run registry = %+v (%v)", ledger, err)
 	}
 	// Daemon #2 will open the same store — close this handle first.
 	st.Close()
 
 	// The whole point: the process itself must have SURVIVED the daemon.
-	pgrepOut, _ := exec.Command("pgrep", "-f", "sleep 30").Output()
+	pgrepOut, _ := exec.Command("pgrep", "-f", "sleep 3737").Output()
 	if len(strings.TrimSpace(string(pgrepOut))) == 0 {
 		t.Fatal("released process was killed — daemon stop must never destroy running work")
 	}
@@ -315,7 +315,7 @@ command = ["/bin/sleep", "30"]
 	<-serveDone2
 
 	// Clean up the survivor (test hygiene, not product behavior).
-	exec.Command("pkill", "-f", "sleep 30").Run()
+	exec.Command("pkill", "-f", "sleep 3737").Run()
 }
 
 func TestServeRefusesWithoutAPIKey(t *testing.T) {

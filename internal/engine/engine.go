@@ -108,13 +108,15 @@ type Options struct {
 	// on-time fire resets the streak.
 	OverrunStreakThreshold int
 
-	// Released-run adoption hooks (injected for tests; real defaults talk
-	// to the OS). PidAlive: is the process alive. VerifyPid: does the
-	// process still look like the run we released (identity guard against
-	// pid reuse). KillPgid: signal a released run's process group.
-	PidAlive  func(pid int) bool
-	VerifyPid func(pid int, argv0 string) bool
-	KillPgid  func(pid int)
+	// Live-run adoption hooks (injected for tests; real defaults talk to
+	// the OS). PidAlive: is the process alive. ProcessIdentity: a stable
+	// fingerprint of the process at that pid (default: its start time via
+	// ps) — captured at spawn and compared at adoption and before kills,
+	// because a reused pid must never be adopted or signalled. KillPgid:
+	// signal an adopted run's process group.
+	PidAlive        func(pid int) bool
+	ProcessIdentity func(pid int) string
+	KillPgid        func(pgid int, sig syscall.Signal)
 }
 
 // Engine owns the per-task scheduling state.
@@ -163,26 +165,53 @@ type taskState struct {
 type releasedRun struct {
 	id           int64
 	pid          int
+	identity     string
 	scheduledFor time.Time
 	startedAt    time.Time
 	logPath      string
 	timedOut     bool
 	logCapKilled bool
+	// Kill escalation for adopted runs: SIGTERM first, SIGKILL after the
+	// same grace owned runs get — a TERM-ignoring process must not hold
+	// the task busy forever.
+	killedAt      time.Time
+	killEscalated bool
 }
 
 // busy reports whether the task has a live run — owned or adopted.
 func (st *taskState) busy() bool { return st.running != nil || st.released != nil }
 
-// verifyPidCommand guards adoption against pid reuse: the process must
-// still be running the command we released. Weak-but-cheap identity — a
-// same-argv0 impostor at the same pid within the restart window is
-// vanishingly unlikely.
-func verifyPidCommand(pid int, argv0 string) bool {
-	out, err := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "command=").Output()
+// processStartTime fingerprints the process at pid by its kernel-recorded
+// start time. Unlike a command-line match, this survives exec (a shell
+// task that execs its real binary keeps its identity) and cannot be
+// spoofed by a reused pid running a similar command — a new process at
+// the same pid necessarily has a new start time. Empty means "no such
+// process / cannot tell".
+func processStartTime(pid int) string {
+	out, err := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "lstart=").Output()
 	if err != nil {
-		return false
+		return ""
 	}
-	return strings.Contains(string(out), argv0)
+	return strings.TrimSpace(string(out))
+}
+
+// sameLiveProcess reports whether pid is alive AND still the process whose
+// identity we recorded at spawn. Both halves matter: alive-only would
+// adopt (and later kill) a stranger after pid reuse; an unknown recorded
+// identity refuses the match, erring toward "not ours".
+func (e *Engine) sameLiveProcess(pid int, identity string) bool {
+	return identity != "" && e.opts.PidAlive(pid) && e.opts.ProcessIdentity(pid) == identity
+}
+
+// killReleased sends the first SIGTERM to an adopted run's process group
+// and arms the SIGKILL escalation; a second cause (e.g. log cap after
+// timeout) never re-sends.
+func (e *Engine) killReleased(rel *releasedRun, now time.Time) {
+	if !rel.killedAt.IsZero() {
+		return
+	}
+	rel.killedAt = now
+	e.opts.KillPgid(rel.pid, syscall.SIGTERM)
 }
 
 // effectiveDue is when a cron fire actually starts: the fire time plus the
@@ -222,7 +251,6 @@ type runningRun struct {
 	startedAt        time.Time
 	handle           Handle
 	logPath          string
-	argv0            string
 	timedOut         bool
 	logCapKilled     bool
 	killedForRestart bool
@@ -245,11 +273,11 @@ func New(clk clock.Clock, st *store.Store, runner Runner, opts Options) *Engine 
 	if opts.PidAlive == nil {
 		opts.PidAlive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
 	}
-	if opts.VerifyPid == nil {
-		opts.VerifyPid = verifyPidCommand
+	if opts.ProcessIdentity == nil {
+		opts.ProcessIdentity = processStartTime
 	}
 	if opts.KillPgid == nil {
-		opts.KillPgid = func(pid int) { syscall.Kill(-pid, syscall.SIGTERM) }
+		opts.KillPgid = func(pgid int, sig syscall.Signal) { syscall.Kill(-pgid, sig) }
 	}
 	return &Engine{
 		clock:  clk,
@@ -321,21 +349,34 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 		next[t.Name] = st
 		order = append(order, t.Name)
 	}
-	// Adopt runs a previous daemon released (never killed — field incident
-	// 2026-09-02): a live, identity-verified pid counts as running again,
-	// so overlap policies hold and the task cannot double-run. A dead or
-	// unverifiable entry is finalized with an unknowable exit.
-	if ledger, err := e.store.ReleasedRuns(); err == nil {
-		for _, rel := range ledger {
-			st, ok := next[rel.Task]
-			if ok && st.busy() {
-				continue // already tracked (reload path carried it over)
+	// Adopt runs from the live-run registry (every spawn is registered, so
+	// this covers a graceful stop AND a crash — never killed, field
+	// incident 2026-09-02): a live, identity-verified pid counts as
+	// running again, so overlap policies hold and the task cannot
+	// double-run. A dead or unverifiable entry is finalized with an
+	// unknowable exit — guarded, so a run that in fact finished (and had
+	// its real exit recorded) keeps its result.
+	tracked := map[int64]bool{}
+	for _, st := range next {
+		if st.running != nil {
+			tracked[st.running.id] = true
+		}
+		if st.released != nil {
+			tracked[st.released.id] = true
+		}
+	}
+	if registry, err := e.store.LiveRuns(); err == nil {
+		for _, rel := range registry {
+			if tracked[rel.RunID] {
+				continue // this daemon's own run (reload path)
 			}
-			alive := e.opts.PidAlive(rel.Pid) && e.opts.VerifyPid(rel.Pid, rel.Argv0)
-			if ok && alive {
+			st, ok := next[rel.Task]
+			alive := e.sameLiveProcess(rel.Pid, rel.Identity)
+			if ok && alive && !st.busy() {
 				st.released = &releasedRun{
 					id:           rel.RunID,
 					pid:          rel.Pid,
+					identity:     rel.Identity,
 					scheduledFor: rel.ScheduledFor,
 					startedAt:    rel.StartedAt,
 					logPath:      rel.LogPath,
@@ -343,12 +384,13 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 				continue
 			}
 			if !alive {
-				e.store.FinishRun(rel.RunID, -1,
+				e.store.FinishRunUnknownExit(rel.RunID,
 					"released run ended while unmanaged (exit status unknown)", now)
-				e.store.ClearReleased(rel.RunID)
+				e.store.ClearLiveRun(rel.RunID)
 			}
-			// alive but its task is no longer defined: leave the ledger
-			// entry — a later reload may re-define the task and adopt it.
+			// alive but its task is gone (or, crash debris, its task is
+			// already busy): leave the entry — a later Configure or tick
+			// settles it once the process ends or the task returns.
 		}
 	}
 
@@ -391,19 +433,11 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 
 	// Adopted (released) runs get the same per-task protections — the only
 	// difference is the kill channel (pgid signal) and that death is
-	// detected by liveness rather than a watch goroutine.
+	// detected by liveness rather than a watch goroutine. Identity is
+	// re-verified BEFORE any signal: a pid reused after mid-flight death
+	// must be finalized, never killed.
 	if rel := st.released; rel != nil {
-		if cfg.Timeout.Value() > 0 && !rel.timedOut && now.Sub(rel.startedAt) >= cfg.Timeout.Value() {
-			rel.timedOut = true
-			e.opts.KillPgid(rel.pid)
-		}
-		if cfg.LogMaxMB > 0 && !rel.timedOut && !rel.logCapKilled {
-			if info, err := os.Stat(rel.logPath); err == nil && info.Size() > int64(cfg.LogMaxMB)<<20 {
-				rel.logCapKilled = true
-				e.opts.KillPgid(rel.pid)
-			}
-		}
-		if !e.opts.PidAlive(rel.pid) {
+		if !e.sameLiveProcess(rel.pid, rel.identity) {
 			msg := "released run ended (exit status unknown)"
 			switch {
 			case rel.timedOut:
@@ -411,13 +445,30 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 			case rel.logCapKilled:
 				msg = "released run killed: log size cap exceeded (exit status unknown)"
 			}
-			e.store.FinishRun(rel.id, -1, msg, now)
-			e.store.ClearReleased(rel.id)
+			e.store.FinishRunUnknownExit(rel.id, msg, now)
+			e.store.ClearLiveRun(rel.id)
 			st.released = nil
 			if st.queued != nil {
 				fire := *st.queued
 				st.queued = nil
 				e.startRunLocked(st, fire, store.OutcomeQueued, now)
+			}
+		} else {
+			if cfg.Timeout.Value() > 0 && !rel.timedOut && now.Sub(rel.startedAt) >= cfg.Timeout.Value() {
+				rel.timedOut = true
+				e.killReleased(rel, now)
+			}
+			if cfg.LogMaxMB > 0 && !rel.timedOut && !rel.logCapKilled {
+				if info, err := os.Stat(rel.logPath); err == nil && info.Size() > int64(cfg.LogMaxMB)<<20 {
+					rel.logCapKilled = true
+					e.killReleased(rel, now)
+				}
+			}
+			// A TERM-ignoring process must not hold the task busy forever:
+			// escalate to SIGKILL after the same grace owned runs get.
+			if !rel.killedAt.IsZero() && !rel.killEscalated && now.Sub(rel.killedAt) >= killGrace {
+				rel.killEscalated = true
+				e.opts.KillPgid(rel.pid, syscall.SIGKILL)
 			}
 		}
 	}
@@ -517,8 +568,8 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 		}
 		// An adopted run is killed over its pgid; its death (detected by
 		// liveness) then releases the queued fire.
-		if rel := st.released; rel != nil && !rel.timedOut && !rel.logCapKilled {
-			e.opts.KillPgid(rel.pid)
+		if rel := st.released; rel != nil {
+			e.killReleased(rel, now)
 		}
 		if st.queued != nil {
 			e.recordMissed(cfg.Name, *st.queued, store.MissedOverlap, "")
@@ -627,9 +678,22 @@ func (e *Engine) startRunLocked(st *taskState, scheduledFor time.Time, outcome s
 		startedAt:    now,
 		handle:       handle,
 		logPath:      logPath,
-		argv0:        argv[0],
 	}
 	st.lastAttemptStart = now
+	// Register in the live-run registry at spawn, not at shutdown: this is
+	// what makes runs adoptable after ANY daemon end — crash included, and
+	// launchd's KeepAlive restarts a crashed daemon within seconds. A
+	// registry write failure must not stop the scheduler (the run merely
+	// loses adoptability).
+	e.store.RecordLiveRun(store.LiveRun{
+		RunID:        id,
+		Task:         cfg.Name,
+		Pid:          handle.Pid(),
+		Identity:     e.opts.ProcessIdentity(handle.Pid()),
+		ScheduledFor: scheduledFor,
+		StartedAt:    now,
+		LogPath:      logPath,
+	})
 	go e.watch(cfg.Name, id, handle)
 }
 
@@ -657,6 +721,7 @@ func (e *Engine) finishRun(task string, id int64, res Result) {
 		}
 	}
 	e.store.FinishRun(id, res.ExitCode, errMsg, now)
+	e.store.ClearLiveRun(id)
 
 	if res.ExitCode != 0 || errMsg != "" {
 		ev := Event{Type: EventFailure, Task: task, ExitCode: res.ExitCode, Error: errMsg}
@@ -737,32 +802,22 @@ func (e *Engine) Resume(name string) error {
 	return nil
 }
 
-// ReleaseAll hands every running run over to the released ledger —
-// WITHOUT killing. A stopping daemon must never destroy the user's
-// running work (field incident 2026-09-02: a daemon stop killed an
-// in-flight task and the work was lost). The processes run in their own
-// process groups and keep going; their history rows stay open, and the
-// ledger (pid + identity) lets the next daemon adopt them so overlap
-// policies hold across the restart and the task cannot double-run.
-// Kills remain only where explicitly configured per task: timeout,
-// log_max_mb, and the kill-and-restart overlap policy.
+// ReleaseAll disowns every running run — WITHOUT killing. A stopping
+// daemon must never destroy the user's running work (field incident
+// 2026-09-02: a daemon stop killed an in-flight task and the work was
+// lost). The processes run in their own process groups and keep going;
+// their history rows stay open, and the live-run registry (written at
+// spawn, so a crash is covered the same way) lets the next daemon adopt
+// them — overlap policies hold across the restart and the task cannot
+// double-run. Kills remain only where explicitly configured per task:
+// timeout, log_max_mb, and the kill-and-restart overlap policy.
 func (e *Engine) ReleaseAll() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, name := range e.order {
 		st := e.tasks[name]
-		if r := st.running; r != nil {
-			e.store.MarkReleased(store.ReleasedRun{
-				RunID:        r.id,
-				Task:         name,
-				Pid:          r.handle.Pid(),
-				Argv0:        r.argv0,
-				ScheduledFor: r.scheduledFor,
-				StartedAt:    r.startedAt,
-				LogPath:      r.logPath,
-			})
-			st.running = nil
-		}
+		st.running = nil
+		st.released = nil
 		// A queued fire cannot survive the restart in memory; record the
 		// drop so it stays observable.
 		if st.queued != nil {

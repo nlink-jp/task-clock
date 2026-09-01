@@ -140,14 +140,16 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 
 	shutdown := func(reason string) {
 		fmt.Fprintf(stdout, "%s shutting down (%s)\n", logTime(), reason)
+		// Never kill running tasks on daemon stop (field incident
+		// 2026-09-02: an in-flight task was killed and work was lost).
+		// They live in their own process groups and finish unmanaged
+		// (adoptable via the live-run registry written at spawn). Disown
+		// FIRST — the scheduler must stop managing before anything that
+		// can stretch the shutdown (the HTTP drain below).
+		eng.ReleaseAll()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		httpSrv.Shutdown(ctx)
 		cancel()
-		// Never kill running tasks on daemon stop (field incident
-		// 2026-09-02: an in-flight task was killed and work was lost).
-		// They live in their own process groups and finish unmanaged;
-		// their rows are recorded as released, synchronously.
-		eng.ReleaseAll()
 	}
 
 	for {

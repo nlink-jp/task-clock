@@ -68,14 +68,14 @@ CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task, id);
 CREATE TABLE IF NOT EXISTS paused_tasks (
 	task TEXT PRIMARY KEY
 );
-CREATE TABLE IF NOT EXISTS released_runs (
-	run_id     INTEGER PRIMARY KEY,
-	task       TEXT NOT NULL,
+CREATE TABLE IF NOT EXISTS live_runs (
+	run_id        INTEGER PRIMARY KEY,
+	task          TEXT NOT NULL,
 	pid           INTEGER NOT NULL,
-	argv0         TEXT NOT NULL,
+	identity      TEXT NOT NULL,
 	scheduled_for TEXT NOT NULL,
 	started_at    TEXT NOT NULL,
-	log_path   TEXT NOT NULL DEFAULT ''
+	log_path      TEXT NOT NULL DEFAULT ''
 );
 `
 
@@ -133,11 +133,27 @@ func (s *Store) StartRun(task string, scheduledFor time.Time, outcome, logPath s
 	return res.LastInsertId()
 }
 
-// FinishRun records a run's completion.
+// FinishRun records a run's completion. The open-row guard makes it a
+// no-op on an already-finished row: a real recorded exit status must never
+// be overwritten (e.g. by a later daemon finalizing a stale live_runs
+// entry whose run in fact finished during the previous shutdown).
 func (s *Store) FinishRun(id int64, exitCode int, errMsg string, now time.Time) error {
 	_, err := s.db.Exec(
-		`UPDATE runs SET finished_at = ?, exit_code = ?, error = ? WHERE id = ?`,
+		`UPDATE runs SET finished_at = ?, exit_code = ?, error = ?
+		 WHERE id = ? AND finished_at IS NULL`,
 		encodeTime(now), exitCode, errMsg, id)
+	return err
+}
+
+// FinishRunUnknownExit closes a run whose exit status is unknowable (it
+// ended while no daemon was its parent). exit_code stays NULL: unknown is
+// not a failure, and consumers (GUI failure banners, exit rendering) must
+// see the difference.
+func (s *Store) FinishRunUnknownExit(id int64, errMsg string, now time.Time) error {
+	_, err := s.db.Exec(
+		`UPDATE runs SET finished_at = ?, exit_code = NULL, error = ?
+		 WHERE id = ? AND finished_at IS NULL`,
+		encodeTime(now), errMsg, id)
 	return err
 }
 
@@ -233,43 +249,44 @@ func (s *Store) PausedTasks() (map[string]bool, error) {
 	return set, rows.Err()
 }
 
-// ReleasedRun is the ledger entry for a run the daemon left alive at
-// shutdown: enough to re-adopt it on restart (liveness + identity) so a
-// recovering daemon neither kills the work nor double-runs the task.
-type ReleasedRun struct {
+// LiveRun is one entry of the live-run registry: every spawned run is
+// recorded here (pid + process identity) the moment it starts and removed
+// when it finishes. Whatever ends the daemon — graceful stop or crash —
+// the registry is what lets the next daemon adopt the still-running
+// processes, so it neither kills the work nor double-runs the task.
+type LiveRun struct {
 	RunID        int64
 	Task         string
 	Pid          int
-	Argv0        string
+	Identity     string
 	ScheduledFor time.Time
 	StartedAt    time.Time
 	LogPath      string
 }
 
-// MarkReleased records a running run into the released ledger, leaving its
-// history row open — the run is alive, just unmanaged.
-func (s *Store) MarkReleased(r ReleasedRun) error {
+// RecordLiveRun registers a just-spawned run.
+func (s *Store) RecordLiveRun(r LiveRun) error {
 	_, err := s.db.Exec(
-		`INSERT OR REPLACE INTO released_runs (run_id, task, pid, argv0, scheduled_for, started_at, log_path)
+		`INSERT OR REPLACE INTO live_runs (run_id, task, pid, identity, scheduled_for, started_at, log_path)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		r.RunID, r.Task, r.Pid, r.Argv0, encodeTime(r.ScheduledFor), encodeTime(r.StartedAt), r.LogPath)
+		r.RunID, r.Task, r.Pid, r.Identity, encodeTime(r.ScheduledFor), encodeTime(r.StartedAt), r.LogPath)
 	return err
 }
 
-// ReleasedRuns returns the ledger, oldest first.
-func (s *Store) ReleasedRuns() ([]ReleasedRun, error) {
+// LiveRuns returns the registry, oldest first.
+func (s *Store) LiveRuns() ([]LiveRun, error) {
 	rows, err := s.db.Query(
-		`SELECT run_id, task, pid, argv0, scheduled_for, started_at, log_path
-		 FROM released_runs ORDER BY run_id`)
+		`SELECT run_id, task, pid, identity, scheduled_for, started_at, log_path
+		 FROM live_runs ORDER BY run_id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ReleasedRun
+	var out []LiveRun
 	for rows.Next() {
-		var r ReleasedRun
+		var r LiveRun
 		var sched, started string
-		if err := rows.Scan(&r.RunID, &r.Task, &r.Pid, &r.Argv0, &sched, &started, &r.LogPath); err != nil {
+		if err := rows.Scan(&r.RunID, &r.Task, &r.Pid, &r.Identity, &sched, &started, &r.LogPath); err != nil {
 			return nil, err
 		}
 		if r.ScheduledFor, err = decodeTime(sched); err != nil {
@@ -283,9 +300,9 @@ func (s *Store) ReleasedRuns() ([]ReleasedRun, error) {
 	return out, rows.Err()
 }
 
-// ClearReleased removes a ledger entry (the run ended or was disowned).
-func (s *Store) ClearReleased(runID int64) error {
-	_, err := s.db.Exec(`DELETE FROM released_runs WHERE run_id = ?`, runID)
+// ClearLiveRun removes a registry entry (the run ended or was disowned).
+func (s *Store) ClearLiveRun(runID int64) error {
+	_, err := s.db.Exec(`DELETE FROM live_runs WHERE run_id = ?`, runID)
 	return err
 }
 
