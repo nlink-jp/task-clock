@@ -10,6 +10,20 @@ import (
 	"github.com/nlink-jp/task-clock/internal/config"
 )
 
+// daemonBinaryPath decides which binary the LaunchAgent should run. The
+// daemon must live at a path whose lifecycle nothing else owns: an .app
+// bundle interior dies with the app (quitting the GUI killed the daemon —
+// field incident 2026-09-02), a dist/ build is re-signed under it, and a
+// Homebrew Cellar path is deleted on upgrade. So install copies the
+// running executable into the daemon's own home under data_dir and points
+// the plist there; needsCopy is false only when the executable already
+// *is* the daemon home copy.
+func daemonBinaryPath(execPath, dataDir string) (binPath string, needsCopy bool) {
+	home := filepath.Join(dataDir, "bin", "task-clock")
+	return home, execPath != home
+}
+
+
 const launchdLabel = "jp.nlink.task-clock"
 
 // GeneratePlist renders the LaunchAgent plist. launchd is used strictly for
@@ -76,19 +90,47 @@ func runInstall(stdout io.Writer) error {
 		return err
 	}
 	stderrPath := filepath.Join(dataDir, "daemon.err")
-	if err := os.WriteFile(path, []byte(GeneratePlist(execPath, stderrPath)), 0o644); err != nil {
+	daemonBin, needsCopy := daemonBinaryPath(execPath, dataDir)
+	if err := os.WriteFile(path, []byte(GeneratePlist(daemonBin, stderrPath)), 0o644); err != nil {
 		return err
 	}
 
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	// A previous registration blocks bootstrap; boot it out first (the
-	// error is expected when nothing is registered).
+	// Boot out first: a previous registration blocks bootstrap (the error
+	// is expected when nothing is registered) — and stopping the daemon
+	// BEFORE copying avoids replacing a running binary, which macOS kills
+	// on signature change.
 	exec.Command("launchctl", "bootout", domain+"/"+launchdLabel).Run()
+
+	if needsCopy {
+		if err := copyExecutable(execPath, daemonBin); err != nil {
+			return fmt.Errorf("installing daemon binary to %s: %w", daemonBin, err)
+		}
+	}
+
 	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
 	}
-	fmt.Fprintf(stdout, "installed: %s (label %s, binary %s)\n", path, launchdLabel, execPath)
+	fmt.Fprintf(stdout, "installed: %s (label %s, binary %s)\n", path, launchdLabel, daemonBin)
 	return nil
+}
+
+// copyExecutable byte-copies src to dst (mode 0755) via a temp file +
+// rename, so a half-written binary can never be what launchd starts. A
+// byte copy preserves the embedded Developer ID signature.
+func copyExecutable(src, dst string) error {
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o755); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dst)
 }
 
 func runUninstall(stdout io.Writer) error {
