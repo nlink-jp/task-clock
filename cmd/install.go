@@ -26,6 +26,21 @@ func daemonBinaryPath(execPath, dataDir string) (binPath string, needsCopy bool)
 
 const launchdLabel = "jp.nlink.task-clock"
 
+// launchctl runs the system launchctl; a variable so tests can intercept
+// the exact call sequence without touching the real launchd domain.
+var launchctl = func(args ...string) (string, error) {
+	out, err := exec.Command("launchctl", args...).CombinedOutput()
+	return string(out), err
+}
+
+func launchdDomain() string {
+	return fmt.Sprintf("gui/%d", os.Getuid())
+}
+
+func launchdService() string {
+	return launchdDomain() + "/" + launchdLabel
+}
+
 // GeneratePlist renders the LaunchAgent plist. launchd is used strictly for
 // residency: KeepAlive restarts the daemon, ProcessType Interactive keeps
 // it out of the background-throttling band, and no launchd timer key
@@ -95,12 +110,11 @@ func runInstall(stdout io.Writer) error {
 		return err
 	}
 
-	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	// Boot out first: a previous registration blocks bootstrap (the error
 	// is expected when nothing is registered) — and stopping the daemon
 	// BEFORE copying avoids replacing a running binary, which macOS kills
 	// on signature change.
-	exec.Command("launchctl", "bootout", domain+"/"+launchdLabel).Run()
+	launchctl("bootout", launchdService())
 
 	if needsCopy {
 		if err := copyExecutable(execPath, daemonBin); err != nil {
@@ -108,10 +122,51 @@ func runInstall(stdout io.Writer) error {
 		}
 	}
 
-	if out, err := exec.Command("launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
+	// A prior `task-clock stop` leaves a persistent disable record that
+	// would make bootstrap fail — installing is an explicit "run it".
+	launchctl("enable", launchdService())
+	if out, err := launchctl("bootstrap", launchdDomain(), path); err != nil {
 		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
 	}
 	fmt.Fprintf(stdout, "installed: %s (label %s, binary %s)\n", path, launchdLabel, daemonBin)
+	return nil
+}
+
+// runStart resumes a stopped daemon. Distinct from install (setup: write
+// plist, copy binary): start only flips the run state of an existing
+// registration. enable clears the persistent off record a stop leaves,
+// without which bootstrap is refused.
+func runStart(stdout io.Writer) error {
+	path, err := plistPath()
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("daemon is not installed — run `task-clock install` first")
+	}
+	launchctl("enable", launchdService())
+	// Already loaded (print succeeds) means launchd owns it right now —
+	// KeepAlive keeps it running; a second bootstrap would only error.
+	if _, err := launchctl("print", launchdService()); err == nil {
+		fmt.Fprintln(stdout, "already running")
+		return nil
+	}
+	if out, err := launchctl("bootstrap", launchdDomain(), path); err != nil {
+		return fmt.Errorf("launchctl bootstrap: %v: %s", err, out)
+	}
+	fmt.Fprintf(stdout, "started: %s\n", launchdLabel)
+	return nil
+}
+
+// runStop stops the daemon without killing its running tasks (they are
+// released and re-adopted on the next start). disable makes the stop
+// survive logins — without it, RunAtLoad silently revives a daemon the
+// user deliberately turned off. Both calls are best-effort so stop is
+// idempotent (stopping a stopped daemon is not an error).
+func runStop(stdout io.Writer) error {
+	launchctl("disable", launchdService())
+	launchctl("bootout", launchdService())
+	fmt.Fprintf(stdout, "stopped: %s (running tasks keep running; `task-clock start` to resume)\n", launchdLabel)
 	return nil
 }
 
@@ -138,8 +193,7 @@ func runUninstall(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	domain := fmt.Sprintf("gui/%d", os.Getuid())
-	exec.Command("launchctl", "bootout", domain+"/"+launchdLabel).Run()
+	launchctl("bootout", launchdService())
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}

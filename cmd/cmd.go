@@ -40,6 +40,10 @@ func Run(args []string, stdout, stderr io.Writer, version string) int {
 		err = runInstall(stdout)
 	case "uninstall":
 		err = runUninstall(stdout)
+	case "start":
+		err = runStart(stdout)
+	case "stop":
+		err = runStop(stdout)
 	case "version", "-v", "--version":
 		fmt.Fprintln(stdout, versionString(version))
 		return 0
@@ -84,6 +88,8 @@ Commands:
   validate     validate config and preview each task's next fire
   install      generate and register the launchd plist (KeepAlive only)
   uninstall    remove the launchd plist
+  start        start the installed daemon
+  stop         stop the daemon (running tasks are never killed; survives logins)
   version      print the version
 
 Use "task-clock <command> -h" for command flags.
