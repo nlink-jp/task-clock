@@ -167,6 +167,22 @@ func TestStopDisablesThenBootsOutAndIsIdempotent(t *testing.T) {
 	}
 }
 
+// uninstall must clear the disable record too: a stop's record outlives
+// the registration and would refuse a future plain bootstrap.
+func TestUninstallClearsDisableRecord(t *testing.T) {
+	installFakePlist(t)
+	calls := interceptLaunchctl(t, func([]string) error { return nil })
+	if err := runUninstall(io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	got := *calls
+	if len(got) != 2 ||
+		!strings.HasPrefix(got[0], "bootout gui/") ||
+		!strings.HasPrefix(got[1], "enable gui/") {
+		t.Fatalf("call sequence = %v", got)
+	}
+}
+
 // install must lift a lingering stop (enable before bootstrap): installing
 // is an explicit "run it", whatever the previous run state was.
 func TestInstallEnablesBeforeBootstrap(t *testing.T) {

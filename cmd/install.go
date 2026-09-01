@@ -194,6 +194,10 @@ func runUninstall(stdout io.Writer) error {
 		return err
 	}
 	launchctl("bootout", launchdService())
+	// A stop's disable record outlives the registration and would refuse
+	// a future plain bootstrap (observed on a real machine) — uninstall
+	// removes every trace, the run intent included.
+	launchctl("enable", launchdService())
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return err
 	}
