@@ -28,6 +28,7 @@ const (
 	MissedOverlap         = "overlap"           // dropped by overlap policy
 	MissedCoalesced       = "coalesced"         // older fire folded into one catch-up run
 	MissedCatchUpDisabled = "catch_up_disabled" // fire was late and catch_up = false
+	MissedDaemonStop      = "daemon_stop"       // queued fire dropped by a daemon stop
 )
 
 // Run is one row of the history.
@@ -66,6 +67,15 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task, id);
 CREATE TABLE IF NOT EXISTS paused_tasks (
 	task TEXT PRIMARY KEY
+);
+CREATE TABLE IF NOT EXISTS released_runs (
+	run_id     INTEGER PRIMARY KEY,
+	task       TEXT NOT NULL,
+	pid           INTEGER NOT NULL,
+	argv0         TEXT NOT NULL,
+	scheduled_for TEXT NOT NULL,
+	started_at    TEXT NOT NULL,
+	log_path   TEXT NOT NULL DEFAULT ''
 );
 `
 
@@ -221,6 +231,62 @@ func (s *Store) PausedTasks() (map[string]bool, error) {
 		set[t] = true
 	}
 	return set, rows.Err()
+}
+
+// ReleasedRun is the ledger entry for a run the daemon left alive at
+// shutdown: enough to re-adopt it on restart (liveness + identity) so a
+// recovering daemon neither kills the work nor double-runs the task.
+type ReleasedRun struct {
+	RunID        int64
+	Task         string
+	Pid          int
+	Argv0        string
+	ScheduledFor time.Time
+	StartedAt    time.Time
+	LogPath      string
+}
+
+// MarkReleased records a running run into the released ledger, leaving its
+// history row open — the run is alive, just unmanaged.
+func (s *Store) MarkReleased(r ReleasedRun) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO released_runs (run_id, task, pid, argv0, scheduled_for, started_at, log_path)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		r.RunID, r.Task, r.Pid, r.Argv0, encodeTime(r.ScheduledFor), encodeTime(r.StartedAt), r.LogPath)
+	return err
+}
+
+// ReleasedRuns returns the ledger, oldest first.
+func (s *Store) ReleasedRuns() ([]ReleasedRun, error) {
+	rows, err := s.db.Query(
+		`SELECT run_id, task, pid, argv0, scheduled_for, started_at, log_path
+		 FROM released_runs ORDER BY run_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReleasedRun
+	for rows.Next() {
+		var r ReleasedRun
+		var sched, started string
+		if err := rows.Scan(&r.RunID, &r.Task, &r.Pid, &r.Argv0, &sched, &started, &r.LogPath); err != nil {
+			return nil, err
+		}
+		if r.ScheduledFor, err = decodeTime(sched); err != nil {
+			return nil, err
+		}
+		if r.StartedAt, err = decodeTime(started); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// ClearReleased removes a ledger entry (the run ended or was disowned).
+func (s *Store) ClearReleased(runID int64) error {
+	_, err := s.db.Exec(`DELETE FROM released_runs WHERE run_id = ?`, runID)
+	return err
 }
 
 // Prune deletes history rows older than cutoff and returns the log paths of

@@ -143,16 +143,11 @@ func runServe(args []string, stdout, stderr io.Writer, version string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		httpSrv.Shutdown(ctx)
 		cancel()
-		// Kill running tasks: with the daemon gone nobody would record
-		// their completion, and launchd will restart us anyway. Then drain
-		// briefly so the kills are recorded in the history instead of
-		// leaving rows that read "running" forever (SIGTERM grace is 5s;
-		// the drain window must cover it).
-		eng.KillAll()
-		drainDeadline := time.Now().Add(8 * time.Second)
-		for eng.RunningCount() > 0 && time.Now().Before(drainDeadline) {
-			time.Sleep(50 * time.Millisecond)
-		}
+		// Never kill running tasks on daemon stop (field incident
+		// 2026-09-02: an in-flight task was killed and work was lost).
+		// They live in their own process groups and finish unmanaged;
+		// their rows are recorded as released, synchronously.
+		eng.ReleaseAll()
 	}
 
 	for {

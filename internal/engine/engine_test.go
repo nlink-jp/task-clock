@@ -31,6 +31,7 @@ func (c *fakeClock) Set(t time.Time) {
 
 type fakeHandle struct {
 	done   chan Result
+	pid    int
 	mu     sync.Mutex
 	killed bool
 }
@@ -51,6 +52,8 @@ func (h *fakeHandle) wasKilled() bool {
 
 func (h *fakeHandle) finish(r Result) { h.done <- r }
 
+func (h *fakeHandle) Pid() int { return h.pid }
+
 type fakeRunner struct {
 	mu       sync.Mutex
 	specs    []RunSpec
@@ -64,7 +67,7 @@ func (r *fakeRunner) Start(spec RunSpec) (Handle, error) {
 	if r.startErr != nil {
 		return nil, r.startErr
 	}
-	h := &fakeHandle{done: make(chan Result, 1)}
+	h := &fakeHandle{done: make(chan Result, 1), pid: 10_000 + len(r.handles)}
 	r.specs = append(r.specs, spec)
 	r.handles = append(r.handles, h)
 	return h, nil

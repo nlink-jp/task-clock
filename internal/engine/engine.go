@@ -14,9 +14,12 @@ import (
 	"fmt"
 	"hash/fnv"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/nlink-jp/task-clock/internal/clock"
@@ -64,6 +67,7 @@ type Result struct {
 type Handle interface {
 	Kill()               // best-effort terminate (SIGTERM, then SIGKILL)
 	Done() <-chan Result // closed-over channel receiving exactly one Result
+	Pid() int            // process id (== its process group id)
 }
 
 // Runner launches processes. Injected so tests never spawn real ones.
@@ -103,6 +107,14 @@ type Options struct {
 	// exactly this many consecutive not-on-time fires; it re-arms after an
 	// on-time fire resets the streak.
 	OverrunStreakThreshold int
+
+	// Released-run adoption hooks (injected for tests; real defaults talk
+	// to the OS). PidAlive: is the process alive. VerifyPid: does the
+	// process still look like the run we released (identity guard against
+	// pid reuse). KillPgid: signal a released run's process group.
+	PidAlive  func(pid int) bool
+	VerifyPid func(pid int, argv0 string) bool
+	KillPgid  func(pid int)
 }
 
 // Engine owns the per-task scheduling state.
@@ -139,6 +151,38 @@ type taskState struct {
 	// are neither run nor recorded as missed, and the flag does not
 	// survive a daemon restart.
 	paused bool
+
+	// released is a run left alive by a previous daemon (never killed —
+	// field incident 2026-09-02) and re-adopted on startup: it counts as
+	// running for overlap/timeout/log-cap purposes, its death is detected
+	// by liveness polling, and its exit status is unknowable (not our
+	// child).
+	released *releasedRun
+}
+
+type releasedRun struct {
+	id           int64
+	pid          int
+	scheduledFor time.Time
+	startedAt    time.Time
+	logPath      string
+	timedOut     bool
+	logCapKilled bool
+}
+
+// busy reports whether the task has a live run — owned or adopted.
+func (st *taskState) busy() bool { return st.running != nil || st.released != nil }
+
+// verifyPidCommand guards adoption against pid reuse: the process must
+// still be running the command we released. Weak-but-cheap identity — a
+// same-argv0 impostor at the same pid within the restart window is
+// vanishingly unlikely.
+func verifyPidCommand(pid int, argv0 string) bool {
+	out, err := exec.Command("ps", "-p", fmt.Sprint(pid), "-o", "command=").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), argv0)
 }
 
 // effectiveDue is when a cron fire actually starts: the fire time plus the
@@ -178,6 +222,7 @@ type runningRun struct {
 	startedAt        time.Time
 	handle           Handle
 	logPath          string
+	argv0            string
 	timedOut         bool
 	logCapKilled     bool
 	killedForRestart bool
@@ -196,6 +241,15 @@ func New(clk clock.Clock, st *store.Store, runner Runner, opts Options) *Engine 
 	}
 	if opts.OverrunStreakThreshold == 0 {
 		opts.OverrunStreakThreshold = config.DefaultOverrunStreakThreshold
+	}
+	if opts.PidAlive == nil {
+		opts.PidAlive = func(pid int) bool { return syscall.Kill(pid, 0) == nil }
+	}
+	if opts.VerifyPid == nil {
+		opts.VerifyPid = verifyPidCommand
+	}
+	if opts.KillPgid == nil {
+		opts.KillPgid = func(pid int) { syscall.Kill(-pid, syscall.SIGTERM) }
 	}
 	return &Engine{
 		clock:  clk,
@@ -239,6 +293,7 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 		st := &taskState{cfg: t, spec: specs[t.Name]}
 		if prev, ok := e.tasks[t.Name]; ok {
 			st.running = prev.running
+			st.released = prev.released
 			st.queued = prev.queued
 			st.lastSuccess = prev.lastSuccess
 			st.lastAttemptStart = prev.lastAttemptStart
@@ -266,6 +321,37 @@ func (e *Engine) Configure(tasks []config.TaskConfig) error {
 		next[t.Name] = st
 		order = append(order, t.Name)
 	}
+	// Adopt runs a previous daemon released (never killed — field incident
+	// 2026-09-02): a live, identity-verified pid counts as running again,
+	// so overlap policies hold and the task cannot double-run. A dead or
+	// unverifiable entry is finalized with an unknowable exit.
+	if ledger, err := e.store.ReleasedRuns(); err == nil {
+		for _, rel := range ledger {
+			st, ok := next[rel.Task]
+			if ok && st.busy() {
+				continue // already tracked (reload path carried it over)
+			}
+			alive := e.opts.PidAlive(rel.Pid) && e.opts.VerifyPid(rel.Pid, rel.Argv0)
+			if ok && alive {
+				st.released = &releasedRun{
+					id:           rel.RunID,
+					pid:          rel.Pid,
+					scheduledFor: rel.ScheduledFor,
+					startedAt:    rel.StartedAt,
+					logPath:      rel.LogPath,
+				}
+				continue
+			}
+			if !alive {
+				e.store.FinishRun(rel.RunID, -1,
+					"released run ended while unmanaged (exit status unknown)", now)
+				e.store.ClearReleased(rel.RunID)
+			}
+			// alive but its task is no longer defined: leave the ledger
+			// entry — a later reload may re-define the task and adopt it.
+		}
+	}
+
 	// Runs of removed tasks keep executing; their finish is recorded via the
 	// run id even though the state entry is gone.
 	e.tasks = next
@@ -303,6 +389,39 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 		}
 	}
 
+	// Adopted (released) runs get the same per-task protections — the only
+	// difference is the kill channel (pgid signal) and that death is
+	// detected by liveness rather than a watch goroutine.
+	if rel := st.released; rel != nil {
+		if cfg.Timeout.Value() > 0 && !rel.timedOut && now.Sub(rel.startedAt) >= cfg.Timeout.Value() {
+			rel.timedOut = true
+			e.opts.KillPgid(rel.pid)
+		}
+		if cfg.LogMaxMB > 0 && !rel.timedOut && !rel.logCapKilled {
+			if info, err := os.Stat(rel.logPath); err == nil && info.Size() > int64(cfg.LogMaxMB)<<20 {
+				rel.logCapKilled = true
+				e.opts.KillPgid(rel.pid)
+			}
+		}
+		if !e.opts.PidAlive(rel.pid) {
+			msg := "released run ended (exit status unknown)"
+			switch {
+			case rel.timedOut:
+				msg = "released run killed: timeout exceeded (exit status unknown)"
+			case rel.logCapKilled:
+				msg = "released run killed: log size cap exceeded (exit status unknown)"
+			}
+			e.store.FinishRun(rel.id, -1, msg, now)
+			e.store.ClearReleased(rel.id)
+			st.released = nil
+			if st.queued != nil {
+				fire := *st.queued
+				st.queued = nil
+				e.startRunLocked(st, fire, store.OutcomeQueued, now)
+			}
+		}
+	}
+
 	if !cfg.IsEnabled() || st.paused {
 		return
 	}
@@ -310,7 +429,7 @@ func (e *Engine) tickTask(st *taskState, now time.Time) {
 	if cfg.IsWatermark() {
 		// A watermark re-evaluates only when idle: the current run will
 		// move the watermark itself, so there is nothing to queue or miss.
-		if st.running != nil {
+		if st.busy() {
 			return
 		}
 		due := st.watermarkDue()
@@ -363,7 +482,7 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 	cfg := &st.cfg
 	late := now.Sub(st.effectiveDue(fire)) > e.opts.OnTimeSlack
 
-	if st.running == nil {
+	if !st.busy() {
 		if late && !cfg.CatchUpEnabled() {
 			e.noteFireOutcome(st, false)
 			e.recordMissed(cfg.Name, fire, store.MissedCatchUpDisabled, "")
@@ -392,9 +511,14 @@ func (e *Engine) handleFire(st *taskState, fire, now time.Time) {
 			e.recordMissed(cfg.Name, fire, store.MissedOverlap, "")
 		}
 	case config.OverlapKillAndRestart:
-		if !st.running.killedForRestart {
-			st.running.killedForRestart = true
-			st.running.handle.Kill()
+		if r := st.running; r != nil && !r.killedForRestart {
+			r.killedForRestart = true
+			r.handle.Kill()
+		}
+		// An adopted run is killed over its pgid; its death (detected by
+		// liveness) then releases the queued fire.
+		if rel := st.released; rel != nil && !rel.timedOut && !rel.logCapKilled {
+			e.opts.KillPgid(rel.pid)
 		}
 		if st.queued != nil {
 			e.recordMissed(cfg.Name, *st.queued, store.MissedOverlap, "")
@@ -503,6 +627,7 @@ func (e *Engine) startRunLocked(st *taskState, scheduledFor time.Time, outcome s
 		startedAt:    now,
 		handle:       handle,
 		logPath:      logPath,
+		argv0:        argv[0],
 	}
 	st.lastAttemptStart = now
 	go e.watch(cfg.Name, id, handle)
@@ -566,7 +691,7 @@ func (e *Engine) Trigger(name string) error {
 	if !st.cfg.IsEnabled() {
 		return fmt.Errorf("%w: %s", ErrDisabled, name)
 	}
-	if st.running != nil {
+	if st.busy() {
 		return fmt.Errorf("%w: %s", ErrAlreadyRunning, name)
 	}
 	now := e.clock.Now()
@@ -612,28 +737,37 @@ func (e *Engine) Resume(name string) error {
 	return nil
 }
 
-// KillAll terminates every running task (daemon shutdown).
-func (e *Engine) KillAll() {
+// ReleaseAll hands every running run over to the released ledger —
+// WITHOUT killing. A stopping daemon must never destroy the user's
+// running work (field incident 2026-09-02: a daemon stop killed an
+// in-flight task and the work was lost). The processes run in their own
+// process groups and keep going; their history rows stay open, and the
+// ledger (pid + identity) lets the next daemon adopt them so overlap
+// policies hold across the restart and the task cannot double-run.
+// Kills remain only where explicitly configured per task: timeout,
+// log_max_mb, and the kill-and-restart overlap policy.
+func (e *Engine) ReleaseAll() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	for _, name := range e.order {
-		if r := e.tasks[name].running; r != nil {
-			r.handle.Kill()
+		st := e.tasks[name]
+		if r := st.running; r != nil {
+			e.store.MarkReleased(store.ReleasedRun{
+				RunID:        r.id,
+				Task:         name,
+				Pid:          r.handle.Pid(),
+				Argv0:        r.argv0,
+				ScheduledFor: r.scheduledFor,
+				StartedAt:    r.startedAt,
+				LogPath:      r.logPath,
+			})
+			st.running = nil
+		}
+		// A queued fire cannot survive the restart in memory; record the
+		// drop so it stays observable.
+		if st.queued != nil {
+			e.recordMissed(name, *st.queued, store.MissedDaemonStop, "")
+			st.queued = nil
 		}
 	}
-}
-
-// RunningCount reports how many tasks have a live run. Shutdown drains on
-// it so killed runs get their finish recorded before the process exits —
-// otherwise they would sit in the history as "running" forever.
-func (e *Engine) RunningCount() int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	n := 0
-	for _, name := range e.order {
-		if e.tasks[name].running != nil {
-			n++
-		}
-	}
-	return n
 }

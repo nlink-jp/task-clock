@@ -33,6 +33,10 @@ type TaskStatus struct {
 	NextFire        *time.Time     `json:"next_fire,omitempty"`
 	NextExpectedRun NextExpected   `json:"next_expected_run"`
 	Running         *RunningStatus `json:"running,omitempty"`
+	// ReleasedUnmanaged: the run predates this daemon (adopted from the
+	// released ledger) — alive and honoring policies, but its exit status
+	// will be unknowable.
+	ReleasedUnmanaged bool `json:"released_unmanaged,omitempty"`
 	QueuedFor       *time.Time     `json:"queued_for,omitempty"`
 	// OverrunSeconds is how far past a due fire the current run has pushed
 	// the schedule (displayed as the "overrun by N" state, never as a
@@ -67,6 +71,13 @@ func (e *Engine) Status() []TaskStatus {
 				StartedAt:      r.startedAt,
 				ElapsedSeconds: now.Sub(r.startedAt).Seconds(),
 			}
+		} else if rel := st.released; rel != nil {
+			ts.Running = &RunningStatus{
+				ScheduledFor:   rel.scheduledFor,
+				StartedAt:      rel.startedAt,
+				ElapsedSeconds: now.Sub(rel.startedAt).Seconds(),
+			}
+			ts.ReleasedUnmanaged = true
 		}
 		if !ts.Enabled {
 			ts.NextExpectedRun = NextExpected{Kind: "none"}
@@ -80,7 +91,7 @@ func (e *Engine) Status() []TaskStatus {
 			continue
 		}
 		if st.cfg.IsWatermark() {
-			if st.running != nil {
+			if st.busy() {
 				ts.NextExpectedRun = NextExpected{Kind: "after_success"}
 			} else {
 				due := st.watermarkDue()

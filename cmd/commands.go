@@ -64,7 +64,13 @@ func renderState(v api.TaskView, now time.Time) string {
 		return "paused"
 	}
 	if v.Running != nil {
-		s := "running " + fmtDur(now.Sub(v.Running.StartedAt))
+		prefix := "running "
+		if v.ReleasedUnmanaged {
+			// Adopted from a previous daemon: alive and policy-managed,
+			// but its exit status will be unknowable.
+			prefix = "running (unmanaged) "
+		}
+		s := prefix + fmtDur(now.Sub(v.Running.StartedAt))
 		if v.OverrunSeconds > 0 {
 			// The overrun is an explicit state word, never a negative countdown.
 			s += fmt.Sprintf(" (overrun %s)", fmtDur(time.Duration(v.OverrunSeconds)*time.Second))

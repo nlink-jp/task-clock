@@ -66,6 +66,8 @@ func (ExecRunner) Start(spec RunSpec) (Handle, error) {
 
 func (h *execHandle) Done() <-chan Result { return h.done }
 
+func (h *execHandle) Pid() int { return h.pgid }
+
 // Kill sends SIGTERM to the process group, then SIGKILL after a grace
 // period unless the process exits first. Signalling an already-gone group
 // is a harmless no-op.

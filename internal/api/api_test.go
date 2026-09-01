@@ -23,6 +23,7 @@ type nullHandle struct{ done chan engine.Result }
 
 func (h nullHandle) Done() <-chan engine.Result { return h.done }
 func (h nullHandle) Kill()                      {}
+func (h nullHandle) Pid() int                   { return 12345 }
 
 type nullRunner struct {
 	mu     sync.Mutex

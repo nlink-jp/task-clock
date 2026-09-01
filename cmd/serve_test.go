@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"os/exec"
 	"strings"
 	"sync"
 	"testing"
@@ -220,9 +221,10 @@ command = "exit 3"
 	<-serveDone
 }
 
-// A task still running at shutdown must not stay "running" in the history
-// forever: shutdown kills it and drains until the kill is recorded.
-func TestShutdownRecordsKilledRuns(t *testing.T) {
+// A task still running at daemon stop is RELEASED, never killed (field
+// incident 2026-09-02: killing on stop destroyed in-flight work): the
+// process survives the daemon, and its history row says so.
+func TestShutdownReleasesRunningTasks(t *testing.T) {
 	port := freePort(t)
 	dataDir := t.TempDir()
 	dir := writeServeConfig(t, port, dataDir)
@@ -271,12 +273,49 @@ command = ["/bin/sleep", "30"]
 	if err != nil || run == nil {
 		t.Fatalf("no history row: %v", err)
 	}
-	if run.FinishedAt == nil {
-		t.Fatalf("killed run left as running forever: %+v", run)
+	// The row stays OPEN: the run is alive, just unmanaged — the ledger
+	// carries what the next daemon needs to adopt it.
+	if run.FinishedAt != nil {
+		t.Fatalf("released run must stay open for adoption: %+v", run)
 	}
-	if run.ExitCode == nil || *run.ExitCode >= 0 {
-		t.Errorf("killed run should record a signal exit, got %+v", run.ExitCode)
+	ledger, err := st.ReleasedRuns()
+	if err != nil || len(ledger) != 1 || ledger[0].Task != "long-task" {
+		t.Fatalf("released ledger = %+v (%v)", ledger, err)
 	}
+	// Daemon #2 will open the same store — close this handle first.
+	st.Close()
+
+	// The whole point: the process itself must have SURVIVED the daemon.
+	pgrepOut, _ := exec.Command("pgrep", "-f", "sleep 30").Output()
+	if len(strings.TrimSpace(string(pgrepOut))) == 0 {
+		t.Fatal("released process was killed — daemon stop must never destroy running work")
+	}
+
+	// Daemon #2 adopts the orphan: status shows it running (unmanaged) and
+	// a manual trigger is refused — no double-run across the restart.
+	serveTestStop = make(chan struct{})
+	serveDone2 := make(chan int, 1)
+	go func() {
+		serveDone2 <- Run([]string{"serve", "-config", dir}, &serveOut, &serveErr, "t")
+	}()
+	waitCmd(t, "daemon #2 up", func() bool {
+		var out2, err2 bytes.Buffer
+		return Run([]string{"status", "-config", dir}, &out2, &err2, "t") == 0
+	})
+	var statusOut, statusErr bytes.Buffer
+	Run([]string{"status", "-config", dir}, &statusOut, &statusErr, "t")
+	if !strings.Contains(statusOut.String(), "unmanaged") {
+		t.Fatalf("adopted run not shown as unmanaged:\n%s", statusOut.String())
+	}
+	var trigOut, trigErr bytes.Buffer
+	if code := Run([]string{"trigger", "-config", dir, "long-task"}, &trigOut, &trigErr, "t"); code == 0 {
+		t.Fatal("trigger succeeded alongside the adopted orphan — double-run")
+	}
+	close(serveTestStop)
+	<-serveDone2
+
+	// Clean up the survivor (test hygiene, not product behavior).
+	exec.Command("pkill", "-f", "sleep 30").Run()
 }
 
 func TestServeRefusesWithoutAPIKey(t *testing.T) {
