@@ -85,6 +85,7 @@ config 探索順（`config.toml` を含む最初のディレクトリが有効�
 | [watermark.toml](examples/tasks.d/watermark.toml) | 前回成功から N 分で発火（AI バッチ型） |
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` + パイプ |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | レシピ: scli で定期 Slack 投稿（launchd の PATH に注意） |
+| [lookup-db-update.toml](examples/tasks.d/lookup-db-update.toml) | レシピ: nlink-jp lookup ツール群のオフライン DB を毎日更新（1 ツール 1 タスク） |
 
 **設定変更の反映方法** — *reload* は `task-clock reload`・
 `POST /v1/reload`・SIGHUP・GUI の Reload ボタンのいずれでも同じです:

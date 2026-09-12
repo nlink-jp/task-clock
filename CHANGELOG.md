@@ -3,6 +3,16 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `examples/tasks.d/lookup-db-update.toml`: recipe for the daily refresh
+  of the offline stores behind the nlink-jp lookup tools (asn-, mac-,
+  icloud-relay-, tor-exit-lookup) — one task per tool so a failure is
+  attributed to its own row, staggered starts, absolute Homebrew paths.
+  Validated by the example test like every shipped sample
+
 ## [0.4.0] - 2026-09-02
 
 ### Added

@@ -86,6 +86,7 @@ your `tasks.d/` and edit:
 | [watermark.toml](examples/tasks.d/watermark.toml) | fire N after the last success (AI-batch style) |
 | [shell-pipeline.toml](examples/tasks.d/shell-pipeline.toml) | `shell = true` with pipes |
 | [slack-status-report.toml](examples/tasks.d/slack-status-report.toml) | recipe: periodic Slack post via scli (mind the launchd PATH) |
+| [lookup-db-update.toml](examples/tasks.d/lookup-db-update.toml) | recipe: daily refresh of the offline stores behind the nlink-jp lookup tools, one task per tool |
 
 **Applying config changes** — *reload* means any of `task-clock reload`,
 `POST /v1/reload`, SIGHUP, or the GUI's Reload button:

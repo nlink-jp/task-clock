@@ -1,0 +1,42 @@
+# Recipe: daily refresh of the local databases behind the nlink-jp lookup
+# tools (https://github.com/nlink-jp — asn-lookup, mac-lookup,
+# icloud-relay-lookup, tor-exit-lookup). These four keep an offline store
+# that `update` rebuilds; their online siblings (abuse-, doh-, malware-,
+# otx-, rdns-, urlscan-, whois-lookup) cache with a TTL and have nothing
+# to refresh.
+#
+# One task per tool, so a failure (an expired IPinfo token, say) shows up
+# on its own row and never masks the others. Starts are staggered by five
+# minutes; a fire missed while the machine sleeps runs once at wake
+# (catch_up default). asn-lookup reads its token from its own config file
+# — no secret lives here.
+#
+# Note the ABSOLUTE binary paths: the launchd agent's PATH does not include
+# /opt/homebrew/bin, so bare command names that work in your terminal will
+# not resolve inside a task.
+#
+# Copy into ~/.config/task-clock/tasks.d/ and apply with:  task-clock reload
+
+[[task]]
+name    = "asn-lookup-update"          # IPinfo Lite (daily upstream); the CLI never auto-refreshes
+cron    = "0 7 * * *"
+command = ["/opt/homebrew/bin/asn-lookup", "update"]
+timeout = "10m"
+
+[[task]]
+name    = "mac-lookup-update"          # IEEE OUI / MA-M / MA-S / IAB / CID registries
+cron    = "5 7 * * *"
+command = ["/opt/homebrew/bin/mac-lookup", "update"]
+timeout = "5m"
+
+[[task]]
+name    = "icloud-relay-lookup-update" # Apple Private Relay egress list (ETag revalidation)
+cron    = "10 7 * * *"
+command = ["/opt/homebrew/bin/icloud-relay-lookup", "update"]
+timeout = "5m"
+
+[[task]]
+name    = "tor-exit-lookup-update"     # Tor exit list + exit-addresses metadata
+cron    = "15 7 * * *"
+command = ["/opt/homebrew/bin/tor-exit-lookup", "update"]
+timeout = "3m"

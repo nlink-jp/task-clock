@@ -6,8 +6,8 @@
 #
 # Task definitions live in tasks.d/*.toml next to this file — one sample
 # per pattern under examples/tasks.d/ (cron-basic, cron-all-options,
-# watermark, shell-pipeline, slack-status-report): copy the one that
-# matches and edit.
+# watermark, shell-pipeline, slack-status-report, lookup-db-update): copy
+# the one that matches and edit.
 
 [daemon]
 # API key for the localhost HTTP API. Required — the daemon refuses to
