@@ -3,7 +3,14 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.1] - 2026-11-04
+
+### Changed
+
+- **config.toml and tasks.d/*.toml are read by nlink-jp/toml** (v0.1.1)
+  instead of the third-party `BurntSushi/toml`, so the daemon carries no TOML
+  code from outside the organization. The files read as before: unknown keys
+  are still refused, each named in the error.
 
 ### Fixed
 
