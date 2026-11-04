@@ -5,6 +5,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -14,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/BurntSushi/toml"
+	"github.com/nlink-jp/toml"
 
 	"github.com/nlink-jp/task-clock/internal/schedule"
 )
@@ -223,12 +224,15 @@ func Load(dir string) (*Config, error) {
 	cfg := &Config{Dir: dir, FilePath: filepath.Join(dir, ConfigFileName)}
 
 	var df daemonFile
-	md, err := toml.DecodeFile(cfg.FilePath, &df)
-	if err != nil {
+	_, err := toml.DecodeFile(cfg.FilePath, &df)
+	var unknown *toml.UnknownKeysError
+	if err != nil && !errors.As(err, &unknown) {
 		return nil, fmt.Errorf("%s: %w", cfg.FilePath, err)
 	}
-	if err := rejectUnknownKeys(cfg.FilePath, md); err != nil {
-		return nil, err
+	if unknown != nil {
+		if err := rejectUnknownKeys(cfg.FilePath, unknown.Keys); err != nil {
+			return nil, err
+		}
 	}
 	cfg.Daemon = df.Daemon
 	cfg.Hooks = df.Hooks
@@ -250,12 +254,15 @@ func Load(dir string) (*Config, error) {
 	sort.Strings(taskFiles)
 	for _, f := range taskFiles {
 		var tf tasksFile
-		md, err := toml.DecodeFile(f, &tf)
-		if err != nil {
+		_, err := toml.DecodeFile(f, &tf)
+		var unknown *toml.UnknownKeysError
+		if err != nil && !errors.As(err, &unknown) {
 			return nil, fmt.Errorf("%s: %w", f, err)
 		}
-		if err := rejectUnknownKeys(f, md); err != nil {
-			return nil, err
+		if unknown != nil {
+			if err := rejectUnknownKeys(f, unknown.Keys); err != nil {
+				return nil, err
+			}
 		}
 		for i := range tf.Tasks {
 			tf.Tasks[i].Source = f
@@ -280,8 +287,7 @@ func applyDefaults(d *DaemonConfig) {
 	}
 }
 
-func rejectUnknownKeys(path string, md toml.MetaData) error {
-	undecoded := md.Undecoded()
+func rejectUnknownKeys(path string, undecoded []toml.Key) error {
 	if len(undecoded) == 0 {
 		return nil
 	}

@@ -10,7 +10,7 @@ cron 式を自前評価して汎用シェルコマンドを起動し、「予定
 
 - Module path: `github.com/nlink-jp/task-clock`
 - Language: Go (pure Go, CGO 不要), macOS 専用 (darwin/arm64)
-- 依存: robfig/cron (cron 式), BurntSushi/toml (strict decode),
+- 依存: robfig/cron (cron 式), nlink-jp/toml (strict: an unknown key is an error),
   modernc.org/sqlite (pure-Go SQLite)。他は標準ライブラリ
 
 ## Build / test commands
