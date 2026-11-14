@@ -20,6 +20,7 @@ make build     # dist/task-clock に出力 + Developer ID 署名（go build 直�
 make test      # go test ./...
 make vet       # go vet ./...（darwin 専用のためクロス OS matrix なし）
 make build-all # darwin/arm64 のみ（macOS 専用ツール）
+make vuln      # govulncheck（make package が最初に実行し、指摘があれば止まる）
 make package   # zip + notarize
 ```
 
